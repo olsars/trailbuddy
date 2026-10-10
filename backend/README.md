@@ -19,21 +19,26 @@ location (the test suite uses this to keep test data isolated).
 
 ## Demo users
 
-The backend seeds three profiles so the social flow works without signup:
+The backend seeds four profiles so the social flow works without signup:
 
 | User id | Display name | Pixel pet |
 | --- | --- | --- |
-| `sam` | Sam | Fox |
-| `jordan` | Jordan | Bear |
-| `maya` | Maya | Frog |
+| `sam` | Sam | Cat |
+| `xavian` | Xavian | Capybara |
+| `pablo` | Pablo | Dog |
+| `laeh` | Laeh | Bear |
 
-Sam and Jordan begin as friends, and Maya has a pending friend request to Sam.
+Sam and Xavian begin as friends, and Pablo has a pending friend request to Sam.
 Requests default to Sam for compatibility with the GPS simulator and the
 temporary frontend. To act as another profile, send the demo-only header:
 
 ```text
-X-Demo-User-Id: jordan
+X-Demo-User-Id: xavian
 ```
+
+SQLite stores the lowercase avatar token (`cat`, `capybara`, `dog`, or `bear`),
+not the image itself. The frontend maps each token to its corresponding image
+asset.
 
 Useful endpoints:
 
