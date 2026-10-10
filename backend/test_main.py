@@ -109,7 +109,16 @@ class WalkApiTest(unittest.TestCase):
         self.assertEqual(users_response.status_code, 200)
         self.assertEqual(
             {user["id"] for user in users_response.json()},
-            {"sam", "jordan", "maya"},
+            {"sam", "xavian", "pablo", "laeh"},
+        )
+        self.assertEqual(
+            {user["id"]: user["avatar"] for user in users_response.json()},
+            {
+                "sam": "cat",
+                "xavian": "capybara",
+                "pablo": "dog",
+                "laeh": "bear",
+            },
         )
         self.assertEqual(
             self.client.get("/demo/me").json()["id"],
@@ -117,12 +126,12 @@ class WalkApiTest(unittest.TestCase):
         )
         self.assertEqual(
             [friend["id"] for friend in self.client.get("/friends").json()],
-            ["jordan"],
+            ["xavian"],
         )
 
         requests = self.client.get("/friend-requests").json()
         self.assertEqual(len(requests), 1)
-        self.assertEqual(requests[0]["requester_id"], "maya")
+        self.assertEqual(requests[0]["requester_id"], "pablo")
         self.assertEqual(requests[0]["recipient_id"], "sam")
 
         unknown_user_response = self.client.get(
@@ -131,18 +140,133 @@ class WalkApiTest(unittest.TestCase):
         )
         self.assertEqual(unknown_user_response.status_code, 401)
 
+    def test_legacy_demo_profiles_are_migrated(self) -> None:
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.executemany(
+                """
+                INSERT INTO users (id, username, display_name, avatar, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    ("jordan", "jordan", "Jordan", "bear", "2026-01-01T00:00:00+00:00"),
+                    ("maya", "maya", "Maya", "frog", "2026-01-01T00:00:00+00:00"),
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO walks (
+                    id, owner_id, status, start_time, end_time,
+                    visibility, allow_follow_race
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "legacy-jordan-walk",
+                    "jordan",
+                    "completed",
+                    "2026-01-01T00:00:00+00:00",
+                    "2026-01-01T01:00:00+00:00",
+                    "private",
+                    0,
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO friendships (
+                    id, user_one_id, user_two_id, requested_by,
+                    status, created_at, responded_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "legacy-jordan-sam",
+                    "jordan",
+                    "sam",
+                    "jordan",
+                    "pending",
+                    "2026-01-01T00:00:00+00:00",
+                    None,
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO location_shares (
+                    owner_id, viewer_id, enabled, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    "sam",
+                    "jordan",
+                    1,
+                    "2026-01-01T00:00:00+00:00",
+                    "2026-01-01T00:00:00+00:00",
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO user_locations (
+                    user_id, walk_id, latitude, longitude,
+                    recorded_at, received_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "jordan",
+                    "legacy-jordan-walk",
+                    28.6024,
+                    -81.2001,
+                    "2026-01-01T00:30:00+00:00",
+                    "2026-01-01T00:30:01+00:00",
+                ),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        from backend.database import init_db
+
+        init_db()
+
+        connection = sqlite3.connect(self.db_path)
+        try:
+            user_ids = {
+                row[0] for row in connection.execute("SELECT id FROM users").fetchall()
+            }
+            migrated_owner = connection.execute(
+                "SELECT owner_id FROM walks WHERE id = 'legacy-jordan-walk'"
+            ).fetchone()[0]
+            legacy_friendships = connection.execute(
+                """
+                SELECT COUNT(*) FROM friendships
+                WHERE user_one_id IN ('jordan', 'maya')
+                   OR user_two_id IN ('jordan', 'maya')
+                """
+            ).fetchone()[0]
+            legacy_locations = connection.execute(
+                "SELECT COUNT(*) FROM user_locations WHERE user_id IN ('jordan', 'maya')"
+            ).fetchone()[0]
+        finally:
+            connection.close()
+
+        self.assertEqual(user_ids, {"sam", "xavian", "pablo", "laeh"})
+        self.assertEqual(migrated_owner, "xavian")
+        self.assertEqual(legacy_friendships, 0)
+        self.assertEqual(legacy_locations, 0)
+
     def test_friend_request_can_be_sent_and_accepted(self) -> None:
         sent_response = self.client.post(
             "/friend-requests",
-            headers=self.headers_for("jordan"),
-            json={"recipient_id": "maya"},
+            headers=self.headers_for("xavian"),
+            json={"recipient_id": "laeh"},
         )
 
         self.assertEqual(sent_response.status_code, 200)
         friend_request = sent_response.json()
         self.assertEqual(friend_request["status"], "pending")
-        self.assertEqual(friend_request["requester_id"], "jordan")
-        self.assertEqual(friend_request["recipient_id"], "maya")
+        self.assertEqual(friend_request["requester_id"], "xavian")
+        self.assertEqual(friend_request["recipient_id"], "laeh")
 
         wrong_user_response = self.client.patch(
             f"/friend-requests/{friend_request['id']}/accept",
@@ -152,34 +276,34 @@ class WalkApiTest(unittest.TestCase):
 
         accepted_response = self.client.patch(
             f"/friend-requests/{friend_request['id']}/accept",
-            headers=self.headers_for("maya"),
+            headers=self.headers_for("laeh"),
         )
         self.assertEqual(accepted_response.status_code, 200)
         self.assertEqual(accepted_response.json()["status"], "accepted")
 
-        jordan_friends = self.client.get(
+        xavian_friends = self.client.get(
             "/friends",
-            headers=self.headers_for("jordan"),
+            headers=self.headers_for("xavian"),
         ).json()
         self.assertEqual(
-            {friend["id"] for friend in jordan_friends},
-            {"sam", "maya"},
+            {friend["id"] for friend in xavian_friends},
+            {"sam", "laeh"},
         )
 
     def test_walk_visibility_and_timed_points(self) -> None:
-        jordan_headers = self.headers_for("jordan")
+        xavian_headers = self.headers_for("xavian")
         started_walk = self.client.post(
             "/walks/start",
-            headers=jordan_headers,
+            headers=xavian_headers,
         ).json()
-        self.assertEqual(started_walk["owner_id"], "jordan")
+        self.assertEqual(started_walk["owner_id"], "xavian")
         self.assertEqual(started_walk["visibility"], "private")
         self.assertFalse(started_walk["allow_follow_race"])
 
         recorded_at = "2026-10-10T12:34:56-04:00"
         point_response = self.client.post(
             f"/walks/{started_walk['id']}/points",
-            headers=jordan_headers,
+            headers=xavian_headers,
             json={
                 "latitude": 28.6024,
                 "longitude": -81.2001,
@@ -197,7 +321,7 @@ class WalkApiTest(unittest.TestCase):
 
         sharing_response = self.client.patch(
             f"/walks/{started_walk['id']}/sharing",
-            headers=jordan_headers,
+            headers=xavian_headers,
             json={"visibility": "friends", "allow_follow_race": True},
         )
         self.assertEqual(sharing_response.status_code, 200)
@@ -207,11 +331,11 @@ class WalkApiTest(unittest.TestCase):
         sam_feed = self.client.get("/feed").json()
         self.assertIn(started_walk["id"], {walk["id"] for walk in sam_feed})
 
-        maya_feed = self.client.get(
+        pablo_feed = self.client.get(
             "/feed",
-            headers=self.headers_for("maya"),
+            headers=self.headers_for("pablo"),
         ).json()
-        self.assertNotIn(started_walk["id"], {walk["id"] for walk in maya_feed})
+        self.assertNotIn(started_walk["id"], {walk["id"] for walk in pablo_feed})
 
         sam_points_response = self.client.get(
             f"/walks/{started_walk['id']}/points"
@@ -219,11 +343,11 @@ class WalkApiTest(unittest.TestCase):
         self.assertEqual(sam_points_response.status_code, 200)
         self.assertEqual(len(sam_points_response.json()), 1)
 
-        maya_points_response = self.client.get(
+        pablo_points_response = self.client.get(
             f"/walks/{started_walk['id']}/points",
-            headers=self.headers_for("maya"),
+            headers=self.headers_for("pablo"),
         )
-        self.assertEqual(maya_points_response.status_code, 404)
+        self.assertEqual(pablo_points_response.status_code, 404)
 
         non_owner_response = self.client.patch(
             f"/walks/{started_walk['id']}/sharing",
@@ -332,15 +456,15 @@ class WalkApiTest(unittest.TestCase):
             json={"latitude": 28.6024, "longitude": -81.2001},
         ).json()
 
-        jordan_headers = self.headers_for("jordan")
+        xavian_headers = self.headers_for("xavian")
         hidden_response = self.client.get(
             "/locations/sam",
-            headers=jordan_headers,
+            headers=xavian_headers,
         )
         self.assertEqual(hidden_response.status_code, 404)
 
         enabled_response = self.client.patch(
-            "/location-sharing/jordan",
+            "/location-sharing/xavian",
             json={"enabled": True},
         )
         self.assertEqual(enabled_response.status_code, 200)
@@ -348,7 +472,7 @@ class WalkApiTest(unittest.TestCase):
 
         shared_response = self.client.get(
             "/locations/shared-with-me",
-            headers=jordan_headers,
+            headers=xavian_headers,
         )
         self.assertEqual(shared_response.status_code, 200)
         shared_locations = shared_response.json()
@@ -362,13 +486,13 @@ class WalkApiTest(unittest.TestCase):
 
         pending_friend_response = self.client.patch(
             "/location-sharing/sam",
-            headers=self.headers_for("maya"),
+            headers=self.headers_for("pablo"),
             json={"enabled": True},
         )
         self.assertEqual(pending_friend_response.status_code, 403)
 
         disabled_response = self.client.patch(
-            "/location-sharing/jordan",
+            "/location-sharing/xavian",
             json={"enabled": False},
         )
         self.assertEqual(disabled_response.status_code, 200)
@@ -376,16 +500,16 @@ class WalkApiTest(unittest.TestCase):
         self.assertEqual(
             self.client.get(
                 "/locations/shared-with-me",
-                headers=jordan_headers,
+                headers=xavian_headers,
             ).json(),
             [],
         )
 
         settings = self.client.get("/location-sharing").json()
-        jordan_setting = next(
-            setting for setting in settings if setting["friend"]["id"] == "jordan"
+        xavian_setting = next(
+            setting for setting in settings if setting["friend"]["id"] == "xavian"
         )
-        self.assertFalse(jordan_setting["enabled"])
+        self.assertFalse(xavian_setting["enabled"])
 
     def test_walk_event_coordinates_must_be_a_pair(self) -> None:
         walk_id = self.client.post("/walks/start").json()["id"]

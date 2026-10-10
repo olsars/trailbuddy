@@ -17,7 +17,7 @@ Open `http://127.0.0.1:8000/app/`, start a walk, then either use the page's demo
 GPS button or run `python gps/simulator.py --walk-id YOUR_WALK_ID` in another
 terminal. The trail and walk history are stored locally in SQLite.
 
-The backend also seeds Sam, Jordan, and Maya as demo profiles. It supports
+The backend also seeds Sam, Xavian, Pablo, and Laeh as demo profiles. It supports
 friend requests, private/friends/public walk visibility, a separate follow/race
 permission, and a visibility-filtered walk feed without requiring signup. It
 also stores safety check-in events, accepts retry-safe offline GPS batches,

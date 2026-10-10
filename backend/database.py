@@ -9,9 +9,15 @@ DEFAULT_DB_PATH = Path(__file__).resolve().parent / "trailbuddy.db"
 DEFAULT_DEMO_USER_ID = "sam"
 
 DEMO_USERS = (
-    ("sam", "sam", "Sam", "fox"),
-    ("jordan", "jordan", "Jordan", "bear"),
-    ("maya", "maya", "Maya", "frog"),
+    ("sam", "sam", "Sam", "cat"),
+    ("xavian", "xavian", "Xavian", "capybara"),
+    ("pablo", "pablo", "Pablo", "dog"),
+    ("laeh", "laeh", "Laeh", "bear"),
+)
+
+LEGACY_DEMO_USER_MIGRATIONS = (
+    ("jordan", "Jordan", "bear", "xavian"),
+    ("maya", "Maya", "frog", "pablo"),
 )
 
 
@@ -97,10 +103,14 @@ def init_db() -> None:
         created_at = datetime.now(timezone.utc).isoformat()
         connection.executemany(
             """
-            INSERT OR IGNORE INTO users (
+            INSERT INTO users (
                 id, username, display_name, avatar, created_at
             )
             VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                username = excluded.username,
+                display_name = excluded.display_name,
+                avatar = excluded.avatar
             """,
             [(*user, created_at) for user in DEMO_USERS],
         )
@@ -198,19 +208,19 @@ def init_db() -> None:
             """,
             (
                 (
-                    "demo-sam-jordan",
-                    "jordan",
+                    "demo-sam-xavian",
                     "sam",
+                    "xavian",
                     "sam",
                     "accepted",
                     created_at,
                     created_at,
                 ),
                 (
-                    "demo-maya-sam",
-                    "maya",
+                    "demo-pablo-sam",
+                    "pablo",
                     "sam",
-                    "maya",
+                    "pablo",
                     "pending",
                     created_at,
                     None,
@@ -298,3 +308,55 @@ def init_db() -> None:
             )
             """
         )
+
+        # Preserve legacy walk history while replacing the original placeholder
+        # demo profiles. Social and last-location data is intentionally reset so
+        # the new seeded relationships remain predictable for the demo.
+        for (
+            legacy_user_id,
+            legacy_display_name,
+            legacy_avatar,
+            replacement_user_id,
+        ) in LEGACY_DEMO_USER_MIGRATIONS:
+            legacy_user = connection.execute(
+                """
+                SELECT 1
+                FROM users
+                WHERE id = ?
+                  AND username = ?
+                  AND display_name = ?
+                  AND avatar = ?
+                """,
+                (
+                    legacy_user_id,
+                    legacy_user_id,
+                    legacy_display_name,
+                    legacy_avatar,
+                ),
+            ).fetchone()
+            if legacy_user is None:
+                continue
+
+            connection.execute(
+                "UPDATE walks SET owner_id = ? WHERE owner_id = ?",
+                (replacement_user_id, legacy_user_id),
+            )
+            connection.execute(
+                """
+                DELETE FROM friendships
+                WHERE user_one_id = ? OR user_two_id = ? OR requested_by = ?
+                """,
+                (legacy_user_id, legacy_user_id, legacy_user_id),
+            )
+            connection.execute(
+                "DELETE FROM location_shares WHERE owner_id = ? OR viewer_id = ?",
+                (legacy_user_id, legacy_user_id),
+            )
+            connection.execute(
+                "DELETE FROM user_locations WHERE user_id = ?",
+                (legacy_user_id,),
+            )
+            connection.execute(
+                "DELETE FROM users WHERE id = ?",
+                (legacy_user_id,),
+            )
