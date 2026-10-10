@@ -1,3 +1,5 @@
+@import "leaflet/dist/leaflet.css";
+
 :root {
   --text: #6b6375;
   --text-h: #08060d;
