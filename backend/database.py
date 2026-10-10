@@ -64,6 +64,22 @@ def _add_missing_walk_columns(connection: sqlite3.Connection) -> None:
     )
 
 
+def _add_missing_walk_point_columns(connection: sqlite3.Connection) -> None:
+    columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(walk_points)").fetchall()
+    }
+
+    if "client_point_id" not in columns:
+        connection.execute("ALTER TABLE walk_points ADD COLUMN client_point_id TEXT")
+    if "accuracy_meters" not in columns:
+        connection.execute("ALTER TABLE walk_points ADD COLUMN accuracy_meters REAL")
+    if "altitude_meters" not in columns:
+        connection.execute("ALTER TABLE walk_points ADD COLUMN altitude_meters REAL")
+    if "speed_mps" not in columns:
+        connection.execute("ALTER TABLE walk_points ADD COLUMN speed_mps REAL")
+
+
 def init_db() -> None:
     with get_connection() as connection:
         connection.execute(
@@ -112,17 +128,29 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS walk_points (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 walk_id TEXT NOT NULL,
+                client_point_id TEXT,
                 latitude REAL NOT NULL,
                 longitude REAL NOT NULL,
                 recorded_at TEXT NOT NULL,
+                accuracy_meters REAL,
+                altitude_meters REAL,
+                speed_mps REAL,
                 FOREIGN KEY (walk_id) REFERENCES walks (id) ON DELETE CASCADE
             )
             """
         )
+        _add_missing_walk_point_columns(connection)
         connection.execute(
             """
-            CREATE INDEX IF NOT EXISTS idx_walk_points_walk_id
-            ON walk_points (walk_id, id)
+            CREATE INDEX IF NOT EXISTS idx_walk_points_walk_time
+            ON walk_points (walk_id, recorded_at, id)
+            """
+        )
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_walk_points_client_id
+            ON walk_points (walk_id, client_point_id)
+            WHERE client_point_id IS NOT NULL
             """
         )
 
@@ -188,4 +216,85 @@ def init_db() -> None:
                     None,
                 ),
             ),
+        )
+
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS walk_events (
+                id TEXT PRIMARY KEY,
+                walk_id TEXT NOT NULL,
+                client_event_id TEXT,
+                event_type TEXT NOT NULL,
+                recorded_at TEXT NOT NULL,
+                details TEXT,
+                latitude REAL,
+                longitude REAL,
+                FOREIGN KEY (walk_id) REFERENCES walks (id) ON DELETE CASCADE
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_walk_events_walk_id
+            ON walk_events (walk_id, recorded_at, id)
+            """
+        )
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_walk_events_client_id
+            ON walk_events (walk_id, client_event_id)
+            WHERE client_event_id IS NOT NULL
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS walk_summaries (
+                walk_id TEXT PRIMARY KEY,
+                distance_meters REAL NOT NULL,
+                duration_seconds REAL NOT NULL,
+                average_pace_seconds_per_km REAL,
+                point_count INTEGER NOT NULL,
+                computed_at TEXT NOT NULL,
+                FOREIGN KEY (walk_id) REFERENCES walks (id) ON DELETE CASCADE
+            )
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS location_shares (
+                owner_id TEXT NOT NULL,
+                viewer_id TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1
+                    CHECK (enabled IN (0, 1)),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (owner_id, viewer_id),
+                CHECK (owner_id != viewer_id),
+                FOREIGN KEY (owner_id) REFERENCES users (id) ON DELETE CASCADE,
+                FOREIGN KEY (viewer_id) REFERENCES users (id) ON DELETE CASCADE
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_location_shares_viewer
+            ON location_shares (viewer_id, enabled)
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_locations (
+                user_id TEXT PRIMARY KEY,
+                walk_id TEXT,
+                latitude REAL NOT NULL,
+                longitude REAL NOT NULL,
+                recorded_at TEXT NOT NULL,
+                received_at TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+                FOREIGN KEY (walk_id) REFERENCES walks (id) ON DELETE SET NULL
+            )
+            """
         )

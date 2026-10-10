@@ -231,6 +231,175 @@ class WalkApiTest(unittest.TestCase):
         )
         self.assertEqual(non_owner_response.status_code, 404)
 
+    def test_batch_points_events_and_walk_summary(self) -> None:
+        walk = self.client.post("/walks/start").json()
+        walk_id = walk["id"]
+
+        batch_response = self.client.post(
+            f"/walks/{walk_id}/points/batch",
+            json={
+                "points": [
+                    {
+                        "client_point_id": "gps-1",
+                        "latitude": 28.6024,
+                        "longitude": -81.2001,
+                        "recorded_at": "2026-10-10T12:00:00-04:00",
+                        "accuracy_meters": 3.5,
+                        "altitude_meters": 20.0,
+                        "speed_mps": 1.2,
+                    },
+                    {
+                        "client_point_id": "gps-2",
+                        "latitude": 28.6034,
+                        "longitude": -81.2001,
+                        "recorded_at": "2026-10-10T12:01:00-04:00",
+                    },
+                    {
+                        "client_point_id": "gps-2",
+                        "latitude": 28.6034,
+                        "longitude": -81.2001,
+                        "recorded_at": "2026-10-10T12:01:00-04:00",
+                    },
+                ]
+            },
+        )
+
+        self.assertEqual(batch_response.status_code, 200)
+        batch = batch_response.json()
+        self.assertEqual(batch["created_count"], 2)
+        self.assertEqual(batch["duplicate_count"], 1)
+        self.assertEqual(len(self.client.get(f"/walks/{walk_id}/points").json()), 2)
+
+        duplicate_response = self.client.post(
+            f"/walks/{walk_id}/points/batch",
+            json={
+                "points": [
+                    {
+                        "client_point_id": "gps-1",
+                        "latitude": 0,
+                        "longitude": 0,
+                        "recorded_at": "2026-10-10T13:00:00-04:00",
+                    }
+                ]
+            },
+        )
+        self.assertEqual(duplicate_response.json()["created_count"], 0)
+        self.assertEqual(duplicate_response.json()["duplicate_count"], 1)
+
+        event_payload = {
+            "client_event_id": "check-in-1",
+            "event_type": "check_in_requested",
+            "recorded_at": "2026-10-10T12:00:30-04:00",
+            "details": "Scheduled safety check-in",
+            "latitude": 28.6024,
+            "longitude": -81.2001,
+        }
+        first_event = self.client.post(
+            f"/walks/{walk_id}/events",
+            json=event_payload,
+        ).json()
+        duplicate_event = self.client.post(
+            f"/walks/{walk_id}/events",
+            json=event_payload,
+        ).json()
+        self.assertEqual(first_event, duplicate_event)
+        self.assertEqual(
+            self.client.get(f"/walks/{walk_id}/events").json(),
+            [first_event],
+        )
+
+        ended_walk = self.client.patch(f"/walks/{walk_id}").json()
+        summary = ended_walk["summary"]
+        self.assertIsNotNone(summary)
+        self.assertEqual(summary["point_count"], 2)
+        self.assertGreater(summary["distance_meters"], 100)
+        self.assertIsNotNone(summary["average_pace_seconds_per_km"])
+
+        detail_response = self.client.get(f"/walks/{walk_id}")
+        self.assertEqual(detail_response.status_code, 200)
+        self.assertEqual(detail_response.json()["summary"], summary)
+
+        completed_event_response = self.client.post(
+            f"/walks/{walk_id}/events",
+            json={"event_type": "check_in_confirmed"},
+        )
+        self.assertEqual(completed_event_response.status_code, 409)
+
+    def test_friend_location_sharing_and_last_ping(self) -> None:
+        walk_id = self.client.post("/walks/start").json()["id"]
+        point = self.client.post(
+            f"/walks/{walk_id}/points",
+            json={"latitude": 28.6024, "longitude": -81.2001},
+        ).json()
+
+        jordan_headers = self.headers_for("jordan")
+        hidden_response = self.client.get(
+            "/locations/sam",
+            headers=jordan_headers,
+        )
+        self.assertEqual(hidden_response.status_code, 404)
+
+        enabled_response = self.client.patch(
+            "/location-sharing/jordan",
+            json={"enabled": True},
+        )
+        self.assertEqual(enabled_response.status_code, 200)
+        self.assertTrue(enabled_response.json()["enabled"])
+
+        shared_response = self.client.get(
+            "/locations/shared-with-me",
+            headers=jordan_headers,
+        )
+        self.assertEqual(shared_response.status_code, 200)
+        shared_locations = shared_response.json()
+        self.assertEqual(len(shared_locations), 1)
+        self.assertEqual(shared_locations[0]["user"]["id"], "sam")
+        self.assertEqual(
+            shared_locations[0]["last_location"]["last_ping_at"],
+            point["recorded_at"],
+        )
+        self.assertFalse(shared_locations[0]["last_location"]["is_stale"])
+
+        pending_friend_response = self.client.patch(
+            "/location-sharing/sam",
+            headers=self.headers_for("maya"),
+            json={"enabled": True},
+        )
+        self.assertEqual(pending_friend_response.status_code, 403)
+
+        disabled_response = self.client.patch(
+            "/location-sharing/jordan",
+            json={"enabled": False},
+        )
+        self.assertEqual(disabled_response.status_code, 200)
+        self.assertFalse(disabled_response.json()["enabled"])
+        self.assertEqual(
+            self.client.get(
+                "/locations/shared-with-me",
+                headers=jordan_headers,
+            ).json(),
+            [],
+        )
+
+        settings = self.client.get("/location-sharing").json()
+        jordan_setting = next(
+            setting for setting in settings if setting["friend"]["id"] == "jordan"
+        )
+        self.assertFalse(jordan_setting["enabled"])
+
+    def test_walk_event_coordinates_must_be_a_pair(self) -> None:
+        walk_id = self.client.post("/walks/start").json()["id"]
+
+        response = self.client.post(
+            f"/walks/{walk_id}/events",
+            json={
+                "event_type": "inactivity_detected",
+                "latitude": 28.6024,
+            },
+        )
+
+        self.assertEqual(response.status_code, 422)
+
     def test_legacy_walk_database_is_migrated(self) -> None:
         legacy_path = Path(self.temp_dir.name) / "legacy.db"
         connection = sqlite3.connect(legacy_path)
@@ -249,6 +418,17 @@ class WalkApiTest(unittest.TestCase):
                 """
                 INSERT INTO walks (id, status, start_time, end_time)
                 VALUES ('legacy-walk', 'completed', '2026-01-01T00:00:00+00:00', NULL)
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE walk_points (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    walk_id TEXT NOT NULL,
+                    latitude REAL NOT NULL,
+                    longitude REAL NOT NULL,
+                    recorded_at TEXT NOT NULL
+                )
                 """
             )
             connection.commit()
@@ -270,12 +450,26 @@ class WalkApiTest(unittest.TestCase):
                 WHERE id = 'legacy-walk'
                 """
             ).fetchone()
+            point_columns = {
+                row["name"]
+                for row in connection.execute(
+                    "PRAGMA table_info(walk_points)"
+                ).fetchall()
+            }
         finally:
             connection.close()
 
         self.assertEqual(migrated_walk["owner_id"], "sam")
         self.assertEqual(migrated_walk["visibility"], "private")
         self.assertEqual(migrated_walk["allow_follow_race"], 0)
+        self.assertTrue(
+            {
+                "client_point_id",
+                "accuracy_meters",
+                "altitude_meters",
+                "speed_mps",
+            }.issubset(point_columns)
+        )
 
     def test_trail_dashboard_is_served(self) -> None:
         response = self.client.get("/app/")

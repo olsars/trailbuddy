@@ -31,6 +31,11 @@ def main() -> None:
     parser.add_argument("--points", type=int, default=30)
     parser.add_argument("--interval", type=float, default=1.0)
     parser.add_argument("--user", default="sam", help="Demo user id")
+    parser.add_argument(
+        "--batch",
+        action="store_true",
+        help="Queue GPS points locally, then upload them in one offline-safe batch",
+    )
     args = parser.parse_args()
 
     try:
@@ -43,12 +48,23 @@ def main() -> None:
             )["id"]
             print(f"Started walk {walk_id}")
 
+        queued_points = []
         for index in range(args.points):
             point = {
+                "client_point_id": f"sim-{walk_id}-{index}",
                 "latitude": args.latitude + index * 0.00008 + math.sin(index / 3) * 0.00015,
                 "longitude": args.longitude + index * 0.00010 + math.cos(index / 4) * 0.00012,
                 "recorded_at": datetime.now(timezone.utc).isoformat(),
             }
+            if args.batch:
+                queued_points.append(point)
+                print(
+                    f"Queued point {index + 1}: "
+                    f"{point['latitude']:.6f}, {point['longitude']:.6f}"
+                )
+                time.sleep(args.interval)
+                continue
+
             saved = api_request(
                 f"{args.api}/walks/{walk_id}/points",
                 method="POST",
@@ -60,6 +76,18 @@ def main() -> None:
                 f"{saved['latitude']:.6f}, {saved['longitude']:.6f}"
             )
             time.sleep(args.interval)
+
+        if queued_points:
+            result = api_request(
+                f"{args.api}/walks/{walk_id}/points/batch",
+                method="POST",
+                payload={"points": queued_points},
+                user_id=args.user,
+            )
+            print(
+                f"Uploaded {result['created_count']} queued points "
+                f"({result['duplicate_count']} already stored)"
+            )
 
         print(f"Open {args.api}/app/ to see the trail.")
     except (HTTPError, URLError) as error:

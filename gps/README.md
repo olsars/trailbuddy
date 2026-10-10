@@ -14,3 +14,13 @@ Pass `--walk-id ID` to add points to an existing active walk. Run
 Use `--user jordan` (or another seeded demo user id) to record the simulated
 walk for a different profile. Each simulated point includes its GPS timestamp
 so a future ghost can replay the original pace and pauses.
+
+To imitate a Pi that records without service and reconnects later, queue every
+point locally and upload them together:
+
+```powershell
+python gps/simulator.py --batch --interval 0.1
+```
+
+Each simulated point has a repeatable client ID, so retrying the same batch
+does not duplicate data in SQLite.

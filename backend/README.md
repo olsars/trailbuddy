@@ -41,8 +41,14 @@ Useful endpoints:
 - `GET /friends` and `GET /friend-requests`
 - `POST /friend-requests`
 - `PATCH /friend-requests/{request_id}/accept`
+- `GET /walks/{walk_id}` (includes a summary after the walk ends)
 - `PATCH /walks/{walk_id}/sharing`
+- `POST /walks/{walk_id}/points` and `POST /walks/{walk_id}/points/batch`
+- `GET /walks/{walk_id}/points`
+- `POST /walks/{walk_id}/events` and `GET /walks/{walk_id}/events`
 - `GET /feed`
+- `GET /location-sharing` and `PATCH /location-sharing/{friend_id}`
+- `GET /locations/shared-with-me` and `GET /locations/{user_id}`
 
 A walk starts private. Its owner can change its sharing with:
 
@@ -54,6 +60,36 @@ A walk starts private. Its owner can change its sharing with:
 ```
 
 Walk visibility and permission to follow or race are intentionally separate.
+Location sharing is also separate and defaults to off, even for accepted
+friends. A user's Last Ping is updated whenever a GPS point is accepted. The
+API marks a Last Ping stale after five minutes.
+
+For an intermittently connected Pi, give every point a stable
+`client_point_id` and send up to 500 points at once:
+
+```json
+{
+  "points": [
+    {
+      "client_point_id": "pi-boot-42-point-1",
+      "latitude": 28.6024,
+      "longitude": -81.2001,
+      "recorded_at": "2026-10-10T16:00:00Z",
+      "accuracy_meters": 4.5
+    }
+  ]
+}
+```
+
+Repeating a batch is safe: duplicate client IDs are returned but are not stored
+again. Safety events use the same pattern with `client_event_id`. Supported
+event types are `check_in_requested`, `check_in_confirmed`, `check_in_missed`,
+`inactivity_detected`, `movement_resumed`, and `sos_triggered`. Events are kept
+private to the walk owner.
+
+Ending a walk stores its point count, Haversine distance, duration, and average
+pace in SQLite. These values survive a server restart.
+
 The demo header is not authentication and must be replaced before a production
 deployment.
 

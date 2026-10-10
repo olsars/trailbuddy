@@ -19,4 +19,7 @@ terminal. The trail and walk history are stored locally in SQLite.
 
 The backend also seeds Sam, Jordan, and Maya as demo profiles. It supports
 friend requests, private/friends/public walk visibility, a separate follow/race
-permission, and a visibility-filtered walk feed without requiring signup.
+permission, and a visibility-filtered walk feed without requiring signup. It
+also stores safety check-in events, accepts retry-safe offline GPS batches,
+calculates walk summaries, and supports opt-in friend location sharing with a
+Last Ping timestamp.
