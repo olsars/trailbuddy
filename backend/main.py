@@ -1,5 +1,4 @@
-from fastapi import FastAPI
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
 from uuid import uuid4
 from datetime import datetime, timezone
 
@@ -20,7 +19,7 @@ def start_walk():
     walk = {
         "id": walk_id,
         "status": "active",
-        "start_time": datetime.now(timezone.utc).isoformat(),
+        "start_time": datetime.now(timezone.dst).isoformat(),
         "end_time": 0
     }
     walks[walk_id] = walk
@@ -32,4 +31,5 @@ def end_walk(walk_id: str):
         raise HTTPException(status_code=404, detail="Walk not found")
     walk = walks[walk_id]
     walk["status"] = "completed"
-    walk["end_time"] = datetime.now(timezone.utc).isoformat()
+    walk["end_time"] = datetime.now(timezone.dst).isoformat()
+    return walk
