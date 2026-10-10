@@ -1,0 +1,154 @@
+.friends-panel {
+  width: 180px;
+  max-width: 100%;
+  min-height: 100svh;
+  flex-shrink: 0;
+  padding: 24px 10px;
+  background: #171f27;
+  color: #dedfe1;
+  font-family: system-ui, sans-serif;
+}
+
+.friends-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 28px;
+}
+
+.friends-panel__header h1 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 900;
+  letter-spacing: -0.7px;
+  white-space: nowrap;
+}
+
+.friends-panel__menu {
+  padding: 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 17px;
+  cursor: pointer;
+}
+
+.friends-panel__search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 11px 7px;
+  border-radius: 11px;
+  background: #797e82;
+}
+
+.friends-panel__search svg {
+  flex-shrink: 0;
+}
+
+.friends-panel__search input {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #fff;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.friends-panel__search input::placeholder {
+  color: #f0f0f0;
+  opacity: 1;
+}
+
+.friends-panel__search:focus-within {
+  outline: 2px solid #ff8b42;
+  outline-offset: 3px;
+}
+
+.friends-panel__search input:focus-visible {
+  outline: none;
+}
+
+.friends-panel h2 {
+  margin: 26px 0 24px;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.friends-panel__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.friend-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 0;
+}
+
+.friend-card__avatar {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.friend-card__sharing {
+  position: absolute;
+  right: 0;
+  bottom: 1px;
+  width: 8px;
+  height: 8px;
+  border: 1px solid #fff;
+  border-radius: 50%;
+  background: #a5f36a;
+}
+
+.friend-card__details {
+  flex: 1;
+  min-width: 0;
+}
+
+.friend-card__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.friend-card__heading strong {
+  overflow: hidden;
+  color: #b7cba5;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.friend-card__heading span {
+  flex-shrink: 0;
+  color: #b2b8ac;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.friend-card p {
+  margin: 5px 0 0;
+  color: #b2b8ac;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.friends-panel__empty {
+  color: #b2b8ac;
+  font-size: 12px;
+}
+
+.friends-panel__menu:focus-visible {
+  outline: 2px solid #ff8b42;
+  outline-offset: 2px;
+}

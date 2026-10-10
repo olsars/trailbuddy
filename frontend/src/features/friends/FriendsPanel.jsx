@@ -1,106 +1,70 @@
 import { useState } from 'react'
 import FriendCard from './FriendCard'
+import './FriendsPanel.css'
 
 export default function FriendsPanel({ friends = [] }) {
   const [search, setSearch] = useState('')
+  const [expanded, setExpanded] = useState(true)
 
   const filteredFriends = friends.filter((friend) =>
-    friend.displayName
-      .toLowerCase()
-      .includes(search.trim().toLowerCase()),
+    friend.displayName.toLowerCase().includes(search.trim().toLowerCase()),
   )
 
   return (
-    <aside
-      aria-label="Friends"
-      style={{
-        width: '100%',
-        maxWidth: 320,
-        minHeight: '100svh',
-        padding: '28px 20px',
-        background: '#171f27',
-        color: '#f3f4ef',
-      }}
-    >
-      <h1
-        style={{
-          margin: '0 0 30px',
-          fontSize: 25,
-          fontWeight: 900,
-        }}
-      >
-        Trail Buddy
-        <span style={{ color: '#ff8b42' }}>.</span>
-      </h1>
+    <aside className="friends-panel" aria-label="Friends sidebar">
+      <header className="friends-panel__header">
+        <h1>Trail Buddy</h1>
 
-      <label
-        htmlFor="friend-search"
-        style={{
-          display: 'block',
-          marginBottom: 8,
-          fontSize: 13,
-        }}
-      >
-        Search friends
-      </label>
+        <button
+          className="friends-panel__menu"
+          type="button"
+          aria-label={expanded ? 'Collapse friends panel' : 'Expand friends panel'}
+          aria-expanded={expanded}
+          aria-controls="friends-panel-content"
+          onClick={() => setExpanded(!expanded)}
+        >
+          ☰
+        </button>
+      </header>
 
-      <input
-        id="friend-search"
-        type="search"
-        placeholder="Search by name"
-        value={search}
-        onChange={(event) => setSearch(event.target.value)}
-        style={{
-          width: '100%',
-          padding: '13px 14px',
-          border: '1px solid #65717d',
-          borderRadius: 12,
-          background: '#303a45',
-          color: '#fff',
-          font: 'inherit',
-          fontSize: 14,
-        }}
-      />
+      <div id="friends-panel-content" hidden={!expanded}>
+        <div className="friends-panel__search">
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            aria-hidden="true"
+          >
+            <circle cx="10" cy="10" r="7" />
+            <path d="m15 15 6 6" />
+          </svg>
 
-      <h2
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          margin: '30px 0 8px',
-          fontSize: 16,
-        }}
-      >
-        Friends
-        <span style={{ color: '#a8b6ad' }}>{friends.length}</span>
-      </h2>
+          <input
+            type="search"
+            aria-label="Search friends"
+            placeholder="Search Friends"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+        </div>
 
-      <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-        {filteredFriends.map((friend) => (
-          <FriendCard key={friend.id} friend={friend} />
-        ))}
-      </ul>
+        <h2>Friends:</h2>
 
-      {filteredFriends.length === 0 && (
-        <p style={{ color: '#a8b6ad', fontSize: 14 }}>
-          {friends.length === 0
-            ? 'Your friends will appear here.'
-            : 'No friends match your search.'}
-        </p>
-      )}
+        <ul className="friends-panel__list">
+          {filteredFriends.map((friend) => (
+            <FriendCard key={friend.id} friend={friend} />
+          ))}
+        </ul>
 
-      <p
-        style={{
-          marginTop: 32,
-          padding: 14,
-          borderRadius: 12,
-          background: '#22312e',
-          color: '#b9d9c9',
-          fontSize: 12,
-          lineHeight: 1.6,
-        }}
-      >
-        Location appears only when a friend chooses to share it with you.
-      </p>
+        {filteredFriends.length === 0 && (
+          <p className="friends-panel__empty">
+            {friends.length ? 'No friends found.' : 'No friends yet.'}
+          </p>
+        )}
+      </div>
     </aside>
   )
 }
