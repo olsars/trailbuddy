@@ -2,13 +2,20 @@ import argparse
 import json
 import math
 import time
+from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
-def api_request(url: str, method: str = "GET", payload: dict | None = None):
+def api_request(
+    url: str,
+    method: str = "GET",
+    payload: dict | None = None,
+    user_id: str = "sam",
+):
     data = json.dumps(payload).encode() if payload is not None else None
     request = Request(url, data=data, method=method)
+    request.add_header("X-Demo-User-Id", user_id)
     if data is not None:
         request.add_header("Content-Type", "application/json")
     with urlopen(request, timeout=5) as response:
@@ -23,23 +30,30 @@ def main() -> None:
     parser.add_argument("--longitude", type=float, default=-74.0060)
     parser.add_argument("--points", type=int, default=30)
     parser.add_argument("--interval", type=float, default=1.0)
+    parser.add_argument("--user", default="sam", help="Demo user id")
     args = parser.parse_args()
 
     try:
         walk_id = args.walk_id
         if not walk_id:
-            walk_id = api_request(f"{args.api}/walks/start", method="POST")["id"]
+            walk_id = api_request(
+                f"{args.api}/walks/start",
+                method="POST",
+                user_id=args.user,
+            )["id"]
             print(f"Started walk {walk_id}")
 
         for index in range(args.points):
             point = {
                 "latitude": args.latitude + index * 0.00008 + math.sin(index / 3) * 0.00015,
                 "longitude": args.longitude + index * 0.00010 + math.cos(index / 4) * 0.00012,
+                "recorded_at": datetime.now(timezone.utc).isoformat(),
             }
             saved = api_request(
                 f"{args.api}/walks/{walk_id}/points",
                 method="POST",
                 payload=point,
+                user_id=args.user,
             )
             print(
                 f"Point {saved['id']}: "

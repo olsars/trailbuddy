@@ -1,10 +1,18 @@
 import os
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parent / "trailbuddy.db"
+DEFAULT_DEMO_USER_ID = "sam"
+
+DEMO_USERS = (
+    ("sam", "sam", "Sam", "fox"),
+    ("jordan", "jordan", "Jordan", "bear"),
+    ("maya", "maya", "Maya", "frog"),
+)
 
 
 def get_database_path() -> Path:
@@ -30,18 +38,75 @@ def get_connection() -> Iterator[sqlite3.Connection]:
         connection.close()
 
 
+def _add_missing_walk_columns(connection: sqlite3.Connection) -> None:
+    columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(walks)").fetchall()
+    }
+
+    # SQLite cannot add a non-null foreign-key column to a populated table, so
+    # owner_id is added as nullable for existing databases and backfilled below.
+    if "owner_id" not in columns:
+        connection.execute(
+            "ALTER TABLE walks ADD COLUMN owner_id TEXT REFERENCES users (id)"
+        )
+    if "visibility" not in columns:
+        connection.execute(
+            "ALTER TABLE walks ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private'"
+        )
+    if "allow_follow_race" not in columns:
+        connection.execute(
+            "ALTER TABLE walks ADD COLUMN allow_follow_race INTEGER NOT NULL DEFAULT 0"
+        )
+
+    connection.execute(
+        "UPDATE walks SET owner_id = ? WHERE owner_id IS NULL",
+        (DEFAULT_DEMO_USER_ID,),
+    )
+
+
 def init_db() -> None:
     with get_connection() as connection:
         connection.execute(
             """
-            CREATE TABLE IF NOT EXISTS walks (
+            CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
-                status TEXT NOT NULL,
-                start_time TEXT NOT NULL,
-                end_time TEXT
+                username TEXT NOT NULL UNIQUE,
+                display_name TEXT NOT NULL,
+                avatar TEXT NOT NULL,
+                created_at TEXT NOT NULL
             )
             """
         )
+
+        created_at = datetime.now(timezone.utc).isoformat()
+        connection.executemany(
+            """
+            INSERT OR IGNORE INTO users (
+                id, username, display_name, avatar, created_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            [(*user, created_at) for user in DEMO_USERS],
+        )
+
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS walks (
+                id TEXT PRIMARY KEY,
+                owner_id TEXT NOT NULL DEFAULT 'sam',
+                status TEXT NOT NULL,
+                start_time TEXT NOT NULL,
+                end_time TEXT,
+                visibility TEXT NOT NULL DEFAULT 'private'
+                    CHECK (visibility IN ('private', 'friends', 'public')),
+                allow_follow_race INTEGER NOT NULL DEFAULT 0
+                    CHECK (allow_follow_race IN (0, 1)),
+                FOREIGN KEY (owner_id) REFERENCES users (id)
+            )
+            """
+        )
+        _add_missing_walk_columns(connection)
+
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS walk_points (
@@ -59,4 +124,68 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_walk_points_walk_id
             ON walk_points (walk_id, id)
             """
+        )
+
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS friendships (
+                id TEXT PRIMARY KEY,
+                user_one_id TEXT NOT NULL,
+                user_two_id TEXT NOT NULL,
+                requested_by TEXT NOT NULL,
+                status TEXT NOT NULL
+                    CHECK (status IN ('pending', 'accepted', 'declined')),
+                created_at TEXT NOT NULL,
+                responded_at TEXT,
+                CHECK (user_one_id < user_two_id),
+                CHECK (requested_by IN (user_one_id, user_two_id)),
+                UNIQUE (user_one_id, user_two_id),
+                FOREIGN KEY (user_one_id) REFERENCES users (id) ON DELETE CASCADE,
+                FOREIGN KEY (user_two_id) REFERENCES users (id) ON DELETE CASCADE,
+                FOREIGN KEY (requested_by) REFERENCES users (id) ON DELETE CASCADE
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_friendships_status
+            ON friendships (status, user_one_id, user_two_id)
+            """
+        )
+
+        # Seed one accepted friendship and one pending request so the social
+        # flow can be demonstrated without account creation.
+        connection.executemany(
+            """
+            INSERT OR IGNORE INTO friendships (
+                id,
+                user_one_id,
+                user_two_id,
+                requested_by,
+                status,
+                created_at,
+                responded_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                (
+                    "demo-sam-jordan",
+                    "jordan",
+                    "sam",
+                    "sam",
+                    "accepted",
+                    created_at,
+                    created_at,
+                ),
+                (
+                    "demo-maya-sam",
+                    "maya",
+                    "sam",
+                    "maya",
+                    "pending",
+                    created_at,
+                    None,
+                ),
+            ),
         )
