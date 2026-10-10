@@ -1,10 +1,10 @@
 import PixelAvatar from '../../assets/PixelAvatar'
 
-export default function FriendCard({ friend }) {
+export default function FriendCard({ friend, collapsed = false }) {
   const location = friend.locationSharing ? friend.location : null
 
   return (
-    <li className="friend-card">
+    <li className="friend-card" title={friend.displayName}>
       <div className="friend-card__avatar">
         <PixelAvatar name={friend.displayName} size={34} />
 
@@ -17,7 +17,10 @@ export default function FriendCard({ friend }) {
         )}
       </div>
 
-      <div className="friend-card__details">
+      <div
+        className="friend-card__details"
+        aria-hidden={collapsed}
+      >
         <div className="friend-card__heading">
           <strong>{friend.displayName}</strong>
 

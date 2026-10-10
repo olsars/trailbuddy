@@ -3,9 +3,12 @@ import { mockFriends } from './mocks/friends'
 
 export default function App() {
   return (
-    <main style={{ minHeight: '100svh', background: '#1d2338' }}>
+    <main className="app-layout">
       <FriendsPanel friends={mockFriends} />
+
+      <section className="map-area" aria-label="Map">
+        {/* Person 1's map component goes here */}
+      </section>
     </main>
   )
 }
-
