@@ -1,21 +1,30 @@
 import os, sqlite3, requests
+from datetime import datetime, timezone
 
-SERVER_URL = "http://192.168.135.93:8000/docs"   # your teammate's endpoint
+BASE = os.environ.get("TRAILBUDDY_API", "http://192.168.135.93:8000")
+HEADERS = {"X-Demo-User-Id": "pablo"}
 
 db = sqlite3.connect(os.path.expanduser("~/trailbuddy.db"))
 
-def build_payload(wid):
-    w = db.execute("SELECT start_ts, end_ts, distance_m FROM walks WHERE id=?", (wid,)).fetchone()
-    pts = db.execute("SELECT ts, lat, lon FROM points WHERE walk_id=? ORDER BY ts", (wid,)).fetchall()
-    return {"walk_id": wid, "start_ts": w[0], "end_ts": w[1], "distance_m": w[2],
-            "points": [{"ts": t, "lat": la, "lon": lo} for t, la, lo in pts]}
+def iso(ts):
+    return datetime.fromtimestamp(ts, timezone.utc).isoformat()
 
-latest = db.execute("SELECT MAX(id) FROM walks").fetchone()[0]
+wid = db.execute("SELECT MAX(id) FROM walks").fetchone()[0]
+rows = db.execute("SELECT ts, lat, lon FROM points WHERE walk_id=? ORDER BY ts", (wid,)).fetchall()
+points = [{"client_point_id": f"{wid}-{ts}", "latitude": lat, "longitude": lon,
+           "recorded_at": iso(ts)} for ts, lat, lon in rows]
+print(len(points), "points to send")
 
-import json
-p = build_payload(latest)
-print(json.dumps(p)[:300])          # the start of what would be sent
-print(len(p["points"]), "points")
+r = requests.post(f"{BASE}/walks/start", headers=HEADERS, timeout=10)
+print("start:", r.status_code, r.text[:300])
+r.raise_for_status()
+server_id = r.json()["id"]
 
-r = requests.post(SERVER_URL, json=build_payload(latest), timeout=10)
-print(r.status_code, r.text[:200])
+for i in range(0, len(points), 500):
+    r = requests.post(f"{BASE}/walks/{server_id}/points/batch", headers=HEADERS,
+                      json={"points": points[i:i + 500]}, timeout=20)
+    print("points:", r.status_code, r.text[:200])
+    r.raise_for_status()
+
+r = requests.patch(f"{BASE}/walks/{server_id}", headers=HEADERS, timeout=10)
+print("end:", r.status_code, r.text[:300])
