@@ -1,13 +1,36 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>frontend</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="TrailBuddy walk map and safety dashboard" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <title>TrailBuddy</title>
+  <style>
+    :root {
+      --ink: #18352b;
+      --cream: #f7f0d9;
+      --paper: #fffaf0;
+      --moss: #3f775f;
+      --leaf: #77a564;
+      --sun: #efb94f;
+      --line: #c9d5ad;
+    }
+    * { box-sizing: border-box; }
+    html, body, #root {
+      margin: 0;
+      min-height: 100%;
+    }
+    body {
+      min-height: 100vh;
+      color: var(--ink);
+      background: var(--cream);
+      font-family: ui-monospace, "Cascadia Mono", monospace;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/main.jsx"></script>
+</body>
 </html>

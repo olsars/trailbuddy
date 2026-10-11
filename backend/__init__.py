@@ -1,0 +1,2 @@
+"""TrailBuddy backend package."""
+
