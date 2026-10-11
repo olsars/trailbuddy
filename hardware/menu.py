@@ -1,11 +1,14 @@
 import math
 import os
+import socket
 import sqlite3
+import subprocess
 import threading
 import time
 import traceback
 from datetime import datetime, timezone
 from signal import pause
+from urllib.parse import urlparse
 
 import pynmea2
 import requests
@@ -71,10 +74,10 @@ try:
 
     # ---------- state ----------
     menus = {
-        "main": ["Buddy", "Start Walk"],
+        "main": ["Buddy", "Start Walk", "Phone link"],
         "pet":  ["Feed", "Pet", "Back"],
     }
-    state = "main"          # main | pet | ready | walk | end
+    state = "main"          # main | pet | ready | walk | end | info
     cursor = 0
     hunger = 50             # 0 = full, 100 = starving
     happy = 50              # 0 = sad, 100 = happy
@@ -380,6 +383,32 @@ try:
                 print("GPS error, retrying in 2 s:", e)
                 time.sleep(2)
 
+    # ---------- phone link (where to point a phone's browser) ----------
+    info = {"host": None, "port": 8000}
+
+    def local_ip():
+        """This Pi's address on the network it is connected to (the phone's hotspot)."""
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                sock.connect(("10.255.255.255", 1))     # sends nothing; only reveals which interface would be used
+                return sock.getsockname()[0]
+            finally:
+                sock.close()
+        except OSError:
+            pass
+        try:
+            return subprocess.check_output(["hostname", "-I"], text=True, timeout=2).split()[0]
+        except (OSError, subprocess.SubprocessError, IndexError):
+            return None
+
+    def refresh_info():
+        """The server a phone should open: this Pi when the backend runs here, otherwise the remote backend."""
+        parts = urlparse(BASE)
+        host = parts.hostname or "127.0.0.1"
+        info["port"] = parts.port or 8000
+        info["host"] = local_ip() if host in ("127.0.0.1", "localhost", "::1") else host
+
     # ---------- drawing ----------
     def gps_label():
         if gps["good"]:
@@ -415,6 +444,14 @@ try:
                     draw.text((44, 20), f"Dist: {distance_m / 1609.344:.2f} mi", fill="white")
                     draw.text((44, 34), gps_label(), fill="white")
                     draw.text((44, 48), "Live: ok" if net["ok"] else f"Live: -- ({net['pending']})", fill="white")
+                elif state == "info":
+                    draw.text((4, 4), "Open on a phone:", fill="white")
+                    if info["host"]:
+                        draw.text((4, 20), f"{info['host']}:{info['port']}", fill="white")
+                        draw.text((4, 34), f"/app/?user={USER}", fill="white")
+                    else:
+                        draw.text((4, 20), "No network yet", fill="white")
+                    draw.text((4, 50), "Click to exit", fill="white")
                 elif state == "end":
                     draw.text((4, 4), f"{distance_m / 1609.344:.2f} mi  {walk_secs // 60}:{walk_secs % 60:02d}", fill="white")
                     if net["ok"] and net["open"] == 0:
@@ -462,7 +499,7 @@ try:
     # ---------- button handling ----------
     def select():
         global state, cursor, hunger, happy, react_until
-        if state == "end":                     # leave the summary screen
+        if state in ("end", "info"):           # leave the summary / phone-link screen
             state, cursor = "main", 0
             draw_menu()
             return
@@ -479,6 +516,9 @@ try:
                 state, cursor = "pet", 0
             elif choice == "Start Walk":
                 state = "ready"
+            elif choice == "Phone link":
+                refresh_info()
+                state = "info"
         elif state == "pet":
             if choice == "Feed":
                 hunger = max(0, hunger - 20)
@@ -504,7 +544,7 @@ try:
             try:
                 if state == "ready":           # a short click starts the walk
                     start_walk()
-                elif state == "end":
+                elif state in ("end", "info"):
                     state, cursor = "main", 0
                     draw_menu()
                 elif state in menus:
