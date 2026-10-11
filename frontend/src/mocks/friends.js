@@ -4,7 +4,7 @@ export const mockFriends = [
     displayName: 'Pablo',
     locationSharing: true,
     location: {
-      trailName: 'Helen Mark Trail',
+      trailName: 'UCF Main Campus',
       distanceMiles: 0.4,
     },
   },

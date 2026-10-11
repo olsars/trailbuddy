@@ -79,7 +79,7 @@ function FitRoutes({ positions, fallbackCenter, zoom }) {
 export default function WalkMap({
   userPoints = [],
   friendRoutes = [],
-  center = [37.9555, -122.583],
+  center = [28.6024, -81.2001],
   zoom = 15,
 }) {
   const validUserPoints = useMemo(
