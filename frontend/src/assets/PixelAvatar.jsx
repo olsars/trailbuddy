@@ -1,4 +1,4 @@
-export default function PixelAvatar({ name, size = 44 }) {
+export default function PixelAvatar({ name, size = 34 }) {
   return (
     <img
       src="/avatars/cat.avif"
@@ -7,13 +7,12 @@ export default function PixelAvatar({ name, size = 44 }) {
       height={size}
       style={{
         display: 'block',
+        boxSizing: 'border-box',
         flexShrink: 0,
         objectFit: 'contain',
         imageRendering: 'pixelated',
-        background: '#e9dfbd',
-        border: '2px solid #42536b',
         borderRadius: '50%',
-        padding: 4,
+        padding: 3,
       }}
     />
   )

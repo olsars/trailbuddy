@@ -1,7 +1,7 @@
 export const mockFriends = [
   {
-    id: 'sophie',
-    displayName: 'Sophie',
+    id: 'Pablo',
+    displayName: 'Pablo',
     locationSharing: true,
     location: {
       trailName: 'Helen Mark Trail',
@@ -9,14 +9,14 @@ export const mockFriends = [
     },
   },
   {
-    id: 'alex',
-    displayName: 'Alex',
+    id: 'Laeh',
+    displayName: 'Laeh',
     locationSharing: false,
     location: null,
   },
   {
-    id: 'max',
-    displayName: 'Max',
+    id: 'Sam',
+    displayName: 'Sam',
     locationSharing: false,
     location: null,
   },

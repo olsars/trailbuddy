@@ -399,3 +399,15 @@
 .friends-panel__search input:focus-visible {
   outline: none;
 }
+
+.friend-card__avatar {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: 0 0 44px;
+}
+
+.friend-card__sharing {
+  right: 5px;
+  bottom: 2px;
+}
