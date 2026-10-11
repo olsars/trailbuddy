@@ -2,9 +2,13 @@
 
 Project made for KnightHacks IX!
 
-A privacy-first Raspberry Pi hiking companion featuring
-pixel-art animal companions, GPS tracking, smart check-ins,
-emergency contacts, and optional friend location sharing.
+A Raspberry Pi hiking companion featuring a pixel-art animal companion, GPS tracking, 
+and friend location sharing.
+
+## Technologies Used
+The backend is implemented with Python, and the frontend is implemented with CSS, HTML, and JavaScript. Frameworks and tools we used include FastAPI, Leaflet, React-Leaflet, and Vite. The
+physical platform is a Raspberry Pi with a 128×64 display. OpenStreetMap is also used.
+
 
 ## Quick demo
 
@@ -23,3 +27,13 @@ permission, and a visibility-filtered walk feed without requiring signup. It
 also stores safety check-in events, accepts retry-safe offline GPS batches,
 calculates walk summaries, and supports opt-in friend location sharing with a
 Last Ping timestamp.
+
+## How to Run and Access the Application (Frontend)
+```powershell
+npm --prefix frontend run dev
+```
+
+Open `http://localhost:5178/` to view the web application.
+
+## Assumptions and Limitations: 
+This web application is run on a local server.
