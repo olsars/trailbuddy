@@ -3,7 +3,9 @@ import FriendsPanel from './features/friends/FriendsPanel'
 import WalkMap from './components/WalkMap'
 import { requestJson } from './lib/request'
 
-const DEMO_USER = 'sam'
+// Which demo user the page acts as: /app/?user=pablo   (default: sam)
+// It must be the same user the Pi sends walks as (TRAILBUDDY_USER on the Pi, default pablo).
+const DEMO_USER = new URLSearchParams(window.location.search).get('user') || 'sam'
 const NO_FRIEND_ROUTES = []
 
 // Vite uses the proxy; FastAPI's built app uses direct API paths.

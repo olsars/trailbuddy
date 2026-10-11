@@ -17,7 +17,7 @@ from luma.oled.device import ssd1306
 from PIL import Image
 
 # ---------- config (override with environment variables) ----------
-BASE = os.environ.get("TRAILBUDDY_API", "http://192.168.135.93:8000").rstrip("/")
+BASE = os.environ.get("TRAILBUDDY_API", "http://192.168.135.63:8000").rstrip("/")
 USER = os.environ.get("TRAILBUDDY_USER", "pablo")
 VISIBILITY = os.environ.get("TRAILBUDDY_VISIBILITY", "private")   # private | friends | public
 GPS_PORT = os.environ.get("TRAILBUDDY_GPS_PORT", "/dev/ttyAMA0")
@@ -27,6 +27,12 @@ DECAY_SECONDS = 30      # seconds between pet stat decay ticks
 UPLOAD_SECONDS = 2      # how often the live uploader checks for new points
 HAPPY_PER_METER = 0.10  # walking: +1 happiness per 10 m
 HUNGER_PER_METER = 0.05 # walking: +1 hunger per 20 m
+# GPS trail filters: a receiver reports "valid" fixes indoors and between tall buildings that wander
+# tens of metres while you stand still. These keep that drift off the trail.
+MIN_MOVING_MPS = 0.6    # below this speed (about 1.3 mph) you are standing still: ignore position changes
+MAX_WALK_MPS = 7.0      # a jump implying more than this (about 15 mph) is a GPS glitch, not you
+MIN_SATS = 5            # fewer satellites than this: don't trust the fix
+MAX_HDOP = 2.5          # HDOP above this (poor satellite geometry): don't trust the fix
 
 try:
     # ---------- sprites ----------
@@ -78,7 +84,9 @@ try:
     walk_secs = 0
     distance_m = 0.0
     last_pos = None
-    gps = {"fix": False}
+    last_ts = 0.0
+    rejects = 0
+    gps = {"fix": False, "sats": None, "hdop": None}
     net = {"ok": False, "open": 0, "pending": 0}   # live-upload status, kept up to date by the uploader
     wake = threading.Event()                       # wakes the uploader right away (walk start / end)
 
@@ -274,43 +282,79 @@ try:
             if state in ("main", "walk", "pet", "ready", "end"):
                 draw_menu()
 
+    def to_float(value):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def quality_ok():
+        """Enough satellites with decent geometry? Values the receiver hasn't reported don't count against it."""
+        sats, hdop = gps["sats"], gps["hdop"]
+        return (sats is None or sats >= MIN_SATS) and (hdop is None or hdop <= MAX_HDOP)
+
+    def reset_track():
+        global last_pos, last_ts, rejects
+        last_pos, last_ts, rejects = None, 0.0, 0
+
+    def handle_fix(pos, ts, speed):
+        """Decide whether a GPS fix belongs on the trail. Returns True if it should be recorded."""
+        global distance_m, last_pos, last_ts, rejects
+        if last_pos is None:                          # first usable fix of the walk: anchor the trail here
+            last_pos, last_ts = pos, ts
+            return True
+        if speed is not None and speed < MIN_MOVING_MPS:
+            last_ts, rejects = ts, 0                  # standing still: position changes are drift. Time still
+            return False                              # passes, so a later jump is judged against *now*
+        step = haversine(*last_pos, *pos)
+        if step / max(ts - last_ts, 1.0) > MAX_WALK_MPS:
+            rejects += 1                              # a jump no walker could make: a GPS glitch
+            last_ts = ts                              # keep judging it against *now*, or it looks more plausible each second
+            if rejects < 5:
+                return False
+            last_pos, last_ts, rejects = pos, ts, 0   # five in a row: believe it, restart from here
+            return True
+        rejects = 0
+        if step > 3:                                  # distance only counts real steps
+            distance_m += step
+            apply_walk_effects(step)
+            last_pos, last_ts = pos, ts
+        return True
+
     def gps_loop():
-        global distance_m, last_pos
         while True:
             try:
                 ser = serial.Serial(GPS_PORT, 9600, timeout=1)
                 while True:
                     line = ser.readline().decode("ascii", errors="ignore").strip()
+                    if line.startswith(("$GPGGA", "$GNGGA")):       # satellite count and HDOP (lower is better)
+                        try:
+                            gga = pynmea2.parse(line)
+                        except pynmea2.ParseError:
+                            continue
+                        gps["sats"] = to_float(gga.num_sats)
+                        gps["hdop"] = to_float(gga.horizontal_dil)
+                        continue
                     if not line.startswith(("$GPRMC", "$GNRMC")):
                         continue
                     try:
                         msg = pynmea2.parse(line)
                     except pynmea2.ParseError:
                         continue
-                    gps["fix"] = msg.status == "A"
+                    gps["fix"] = msg.status == "A" and quality_ok()
                     if not gps["fix"]:
                         continue
-                    pos = (msg.latitude, msg.longitude)
-                    if state == "walk" and walk_id:
-                        try:
-                            speed = round(float(msg.spd_over_grnd) * 0.514444, 2)   # knots -> m/s
-                        except (TypeError, ValueError):
-                            speed = None
+                    if state != "walk" or not walk_id:
+                        reset_track()
+                        continue
+                    knots = to_float(msg.spd_over_grnd)
+                    speed = round(knots * 0.514444, 2) if knots is not None else None   # knots -> m/s
+                    if handle_fix((msg.latitude, msg.longitude), gps_epoch(msg), speed):
                         with db_lock:
                             db.execute("INSERT INTO points (walk_id, ts, lat, lon, speed) VALUES (?,?,?,?,?)",
-                                    (walk_id, gps_epoch(msg), pos[0], pos[1], speed))
+                                    (walk_id, gps_epoch(msg), msg.latitude, msg.longitude, speed))
                             db.commit()
                         wake.set()                      # push it out now instead of waiting for the next pass
-                    if state != "walk":
-                        last_pos = None
-                    elif last_pos is None:
-                        last_pos = pos
-                    else:
-                        step = haversine(*last_pos, *pos)
-                        if step > 3:                          # ignore jitter under 3 m
-                            distance_m += step
-                            apply_walk_effects(step)
-                            last_pos = pos
             except Exception as e:
                 gps["fix"] = False
                 print("GPS error, retrying in 2 s:", e)
@@ -365,8 +409,9 @@ try:
 
     # ---------- walk lifecycle ----------
     def start_walk():
-        global state, walk_t0, distance_m, last_pos, walk_id
-        distance_m, last_pos = 0.0, None
+        global state, walk_t0, distance_m, walk_id
+        distance_m = 0.0
+        reset_track()
         with db_lock:
             cur = db.execute("INSERT INTO walks (start_ts) VALUES (?)", (time.time(),))
             db.commit()
