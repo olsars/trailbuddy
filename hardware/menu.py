@@ -541,21 +541,21 @@ try:
             return
         choice = menus[state][cursor]
         if state == "main":
-            if choice == "Buddy":
+            if choice == "> Buddy <":
                 state, cursor = "pet", 0
-            elif choice == "Start Walk":
+            elif choice == "> Start Walk <":
                 state = "ready"
-            elif choice == "Phone link":
+            elif choice == "> Phone link <":
                 refresh_info()
                 state = "info"
         elif state == "pet":
-            if choice == "Feed":
+            if choice == "- Feed":
                 hunger = max(0, hunger - 20)
                 react_until = time.time() + 2
-            elif choice == "Pet":
+            elif choice == "- Pet":
                 happy = min(100, happy + 10)
                 react_until = time.time() + 2
-            elif choice == "Back":
+            elif choice == "- Back":
                 state, cursor = "main", 0
         draw_menu()
 
