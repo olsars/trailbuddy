@@ -37,6 +37,8 @@ MAX_WALK_MPS = 7.0      # a jump implying more than this (about 15 mph) is a GPS
 MIN_SATS = 4            # fewer satellites than this: don't put the fix on the trail (4 = minimum for a 3D fix)
 MAX_HDOP = 5.0          # HDOP above this (very poor satellite geometry): don't put the fix on the trail
 DEBUG = os.environ.get("TRAILBUDDY_DEBUG") == "1"   # print every 5 s why GPS fixes are kept or dropped
+HEARTBEAT_SECONDS = 30  # standing still: re-send the last good position this often, so the page does not call it stale (it does after 5 min)
+SPLASH_SECONDS = 3.6    # how long the start screen shows (any button press skips it)
 
 try:
     # ---------- sprites ----------
@@ -77,7 +79,8 @@ try:
         "main": ["Buddy", "Start Walk", "Phone link"],
         "pet":  ["Feed", "Pet", "Back"],
     }
-    state = "main"          # main | pet | ready | walk | end | info
+    state = "splash"        # splash | main | pet | ready | walk | end | info
+    splash_t0 = time.monotonic()
     cursor = 0
     hunger = 50             # 0 = full, 100 = starving
     happy = 50              # 0 = sad, 100 = happy
@@ -89,9 +92,10 @@ try:
     distance_m = 0.0
     last_pos = None
     last_ts = 0.0
+    last_rec = 0.0          # GPS time of the last point put on the trail
     rejects = 0
     gps = {"fix": False, "good": False, "sats": None, "hdop": None}
-    stats = {"fixes": 0, "saved": 0, "still": 0, "jump": 0, "poor": 0, "t": 0.0}   # per-walk counters for DEBUG
+    stats = {"fixes": 0, "saved": 0, "still": 0, "jump": 0, "poor": 0, "beat": 0, "t": 0.0}   # per-walk counters for DEBUG
     net = {"ok": False, "open": 0, "pending": 0}   # live-upload status, kept up to date by the uploader
     wake = threading.Event()                       # wakes the uploader right away (walk start / end)
 
@@ -278,13 +282,15 @@ try:
                 draw_menu()
 
     def anim_loop():
-        global bounce, tick, cat
+        global bounce, tick, cat, state
         while True:
             time.sleep(0.5)
             bounce = 2 - bounce
             tick = (tick + 1) % len(seq)
             cat = frames[seq[tick]]
-            if state in ("main", "walk", "pet", "ready", "end"):
+            if state == "splash" and time.monotonic() - splash_t0 >= SPLASH_SECONDS:
+                state = "main"
+            if state in ("splash", "main", "walk", "pet", "ready", "end"):
                 draw_menu()
 
     def to_float(value):
@@ -299,41 +305,46 @@ try:
         return (sats is None or sats >= MIN_SATS) and (hdop is None or hdop <= MAX_HDOP)
 
     def reset_track():
-        global last_pos, last_ts, rejects
-        last_pos, last_ts, rejects = None, 0.0, 0
+        global last_pos, last_ts, last_rec, rejects
+        last_pos, last_ts, last_rec, rejects = None, 0.0, 0.0, 0
 
     def handle_fix(pos, ts, speed):
-        """Decide whether a GPS fix belongs on the trail. Returns True if it should be recorded."""
-        global distance_m, last_pos, last_ts, rejects
+        """Decide whether a GPS fix belongs on the trail. Returns the position to record, or None to skip it."""
+        global distance_m, last_pos, last_ts, last_rec, rejects
         if last_pos is None:                          # first usable fix of the walk: anchor the trail here
-            last_pos, last_ts = pos, ts
-            return True
+            last_pos, last_ts, last_rec = pos, ts, ts
+            return pos
         if speed is not None and speed < MIN_MOVING_MPS:
             stats["still"] += 1
             last_ts, rejects = ts, 0                  # standing still: position changes are drift. Time still
-            return False                              # passes, so a later jump is judged against *now*
+            if ts - last_rec >= HEARTBEAT_SECONDS:    # passes, so a later jump is judged against *now*
+                last_rec = ts                         # still alive: re-send where we were, not where the drift says
+                stats["beat"] += 1
+                return last_pos
+            return None
         step = haversine(*last_pos, *pos)
         if step / max(ts - last_ts, 1.0) > MAX_WALK_MPS:
             stats["jump"] += 1
             rejects += 1                              # a jump no walker could make: a GPS glitch
             last_ts = ts                              # keep judging it against *now*, or it looks more plausible each second
             if rejects < 5:
-                return False
-            last_pos, last_ts, rejects = pos, ts, 0   # five in a row: believe it, restart from here
-            return True
+                return None
+            last_pos, last_ts, last_rec, rejects = pos, ts, ts, 0   # five in a row: believe it, restart from here
+            return pos
         rejects = 0
         if step > 3:                                  # distance only counts real steps
             distance_m += step
             apply_walk_effects(step)
             last_pos, last_ts = pos, ts
-        return True
+        last_rec = ts
+        return pos
 
     def debug_report(speed):
         if not DEBUG or state not in ("ready", "walk") or time.time() - stats["t"] < 5:
             return
         stats["t"] = time.time()
         print(f"GPS [{state}] fix={gps['fix']} good={gps['good']} sats={gps['sats']} hdop={gps['hdop']} speed={speed} m/s | fixes {stats['fixes']} "
-              f"saved {stats['saved']} still {stats['still']} jump {stats['jump']} poor {stats['poor']}")
+              f"saved {stats['saved']} (heartbeats {stats['beat']}) still {stats['still']} jump {stats['jump']} poor {stats['poor']}")
 
     def gps_loop():
         while True:
@@ -371,11 +382,13 @@ try:
                     if not walking:
                         reset_track()
                         continue
-                    if handle_fix((msg.latitude, msg.longitude), gps_epoch(msg), speed):
+                    ts = gps_epoch(msg)
+                    recorded = handle_fix((msg.latitude, msg.longitude), ts, speed)
+                    if recorded:
                         stats["saved"] += 1
                         with db_lock:
                             db.execute("INSERT INTO points (walk_id, ts, lat, lon, speed) VALUES (?,?,?,?,?)",
-                                    (walk_id, gps_epoch(msg), msg.latitude, msg.longitude, speed))
+                                    (walk_id, ts, recorded[0], recorded[1], speed))
                             db.commit()
                         wake.set()                      # push it out now instead of waiting for the next pass
             except Exception as e:
@@ -431,6 +444,18 @@ try:
                         prefix = "> " if i == cursor else "  "
                         draw.text((4, 5 + i * 12), prefix + name, fill="white")
                     draw.text((4, 50), f"H:{hunger:.0f} Happy:{happy:.0f}", fill="white")
+                elif state == "splash":
+                    t = time.monotonic() - splash_t0
+                    if t < 1.2:
+                        face, line = frames["blink"], "zzz..."
+                    elif t < 2.4:
+                        face, line = frames["idle"], "Waking up..."
+                    else:
+                        face, line = frames["happy"], "Let's go for a walk!"
+                    title = "TrailBuddy"
+                    draw.text(((device.width - draw.textlength(title)) / 2, 0), title, fill="white")
+                    draw.bitmap(((device.width - face.width) // 2, 13), face, fill="white")
+                    draw.text(((device.width - draw.textlength(line)) / 2, 52), line, fill="white")
                 elif state == "ready":
                     draw.bitmap((5, 12 + bounce), cat, fill="white")
                     draw.text((44, 8), "Ready?", fill="white")
@@ -499,6 +524,10 @@ try:
     # ---------- button handling ----------
     def select():
         global state, cursor, hunger, happy, react_until
+        if state == "splash":                  # any press skips the start screen
+            state = "main"
+            draw_menu()
+            return
         if state in ("end", "info"):           # leave the summary / phone-link screen
             state, cursor = "main", 0
             draw_menu()
@@ -542,7 +571,10 @@ try:
         global held, cursor, state
         if not held:
             try:
-                if state == "ready":           # a short click starts the walk
+                if state == "splash":          # any press skips the start screen
+                    state = "main"
+                    draw_menu()
+                elif state == "ready":         # a short click starts the walk
                     start_walk()
                 elif state in ("end", "info"):
                     state, cursor = "main", 0
@@ -560,6 +592,7 @@ try:
     # ---------- start ----------
     init_db()
     recover_unfinished()
+    splash_t0 = time.monotonic()            # the start screen's clock begins now, not while the sprites were loading
     threading.Thread(target=decay_loop, daemon=True).start()
     threading.Thread(target=anim_loop, daemon=True).start()
     threading.Thread(target=gps_loop, daemon=True).start()
