@@ -355,6 +355,64 @@ class WalkApiTest(unittest.TestCase):
         )
         self.assertEqual(non_owner_response.status_code, 404)
 
+    def test_get_walks_for_a_user_respects_visibility(self) -> None:
+        xavian_headers = self.headers_for("xavian")
+
+        private_walk = self.client.post(
+            "/walks/start",
+            headers=xavian_headers,
+        ).json()
+        friends_walk = self.client.post(
+            "/walks/start",
+            headers=xavian_headers,
+        ).json()
+        public_walk = self.client.post(
+            "/walks/start",
+            headers=xavian_headers,
+        ).json()
+
+        self.client.patch(
+            f"/walks/{friends_walk['id']}/sharing",
+            headers=xavian_headers,
+            json={"visibility": "friends", "allow_follow_race": True},
+        )
+        self.client.patch(
+            f"/walks/{public_walk['id']}/sharing",
+            headers=xavian_headers,
+            json={"visibility": "public", "allow_follow_race": True},
+        )
+
+        owner_walks = self.client.get(
+            "/users/xavian/walks",
+            headers=xavian_headers,
+        )
+        self.assertEqual(owner_walks.status_code, 200)
+        self.assertEqual(
+            {walk["id"] for walk in owner_walks.json()},
+            {private_walk["id"], friends_walk["id"], public_walk["id"]},
+        )
+
+        friend_walks = self.client.get("/users/xavian/walks")
+        self.assertEqual(friend_walks.status_code, 200)
+        self.assertEqual(
+            {walk["id"] for walk in friend_walks.json()},
+            {friends_walk["id"], public_walk["id"]},
+        )
+
+        non_friend_walks = self.client.get(
+            "/users/xavian/walks",
+            headers=self.headers_for("pablo"),
+        )
+        self.assertEqual(non_friend_walks.status_code, 200)
+        self.assertEqual(
+            {walk["id"] for walk in non_friend_walks.json()},
+            {public_walk["id"]},
+        )
+
+        unknown_user = self.client.get("/users/does-not-exist/walks")
+        self.assertEqual(unknown_user.status_code, 404)
+        self.assertEqual(unknown_user.json(), {"detail": "User not found"})
+
     def test_batch_points_events_and_walk_summary(self) -> None:
         walk = self.client.post("/walks/start").json()
         walk_id = walk["id"]

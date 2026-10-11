@@ -47,6 +47,7 @@ Useful endpoints:
 - `POST /friend-requests`
 - `PATCH /friend-requests/{request_id}/accept`
 - `GET /walks/{walk_id}` (includes a summary after the walk ends)
+- `GET /users/{user_id}/walks` (only walks visible to the requesting user)
 - `PATCH /walks/{walk_id}/sharing`
 - `POST /walks/{walk_id}/points` and `POST /walks/{walk_id}/points/batch`
 - `GET /walks/{walk_id}/points`

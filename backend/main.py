@@ -513,6 +513,32 @@ def get_walks(current_user: dict = Depends(get_current_user)):
     return [walk_to_dict(row) for row in rows]
 
 
+@app.get("/users/{user_id}/walks")
+def get_user_walks(
+    user_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    with get_connection() as connection:
+        user_exists = connection.execute(
+            "SELECT 1 FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+        if user_exists is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        walks = connection.execute(
+            f"{WALK_SELECT} WHERE walks.owner_id = ? "
+            "ORDER BY walks.start_time DESC",
+            (user_id,),
+        ).fetchall()
+        visible_walks = [
+            walk_to_dict(walk)
+            for walk in walks
+            if can_view_walk(connection, walk, current_user["id"])
+        ]
+    return visible_walks
+
+
 @app.get("/feed")
 def get_walk_feed(current_user: dict = Depends(get_current_user)):
     with get_connection() as connection:
