@@ -110,7 +110,7 @@ export default function WalkMap({
   initialLoading = false,
 }) {
 
-    const [tileStatus, setTileStatus] = useState('loading')
+  const [tileStatus, setTileStatus] = useState('loading')
   const loadedTiles = useRef(0)
 
   const tileEvents = useMemo(
@@ -122,8 +122,10 @@ export default function WalkMap({
         loadedTiles.current += 1
       },
       load() {
-        setTileStatus(
-          loadedTiles.current > 0 ? 'ready' : 'error',
+        const batchHasTiles = loadedTiles.current > 0
+        // Later tile failures must not hide a map that already loaded.
+        setTileStatus((current) =>
+          current === 'ready' || batchHasTiles ? 'ready' : 'error',
         )
       },
     }),

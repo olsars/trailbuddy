@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import FriendsPanel from './features/friends/FriendsPanel'
 import WalkMap from './components/WalkMap'
+import { requestJson } from './lib/request'
 
 const DEMO_USER = 'sam'
 const NO_FRIEND_ROUTES = []
@@ -8,19 +9,11 @@ const NO_FRIEND_ROUTES = []
 // Vite uses the proxy; FastAPI's built app uses direct API paths.
 const API_BASE = import.meta.env.DEV ? '/api' : ''
 
-async function getData(path, signal) {
-  const response = await fetch(`${API_BASE}${path}`, {
-    headers: {
-      'X-Demo-User-Id': DEMO_USER,
-    },
+function getData(path, signal) {
+  return requestJson(`${API_BASE}${path}`, {
+    headers: { 'X-Demo-User-Id': DEMO_USER },
     signal,
   })
-
-  if (!response.ok) {
-    throw new Error(`Backend request failed: ${response.status}`)
-  }
-
-  return response.json()
 }
 
 export default function App() {
@@ -77,11 +70,11 @@ export default function App() {
 
         setStatus(`${error.message}. Location updates are paused.`)
       } finally {
-  if (!controller.signal.aborted) {
-    setInitialLoading(false)
-    timer = window.setTimeout(refresh, 3000)
-  }
-  }
+        if (!controller.signal.aborted) {
+          setInitialLoading(false)
+          timer = window.setTimeout(refresh, 3000)
+        }
+      }
     }
 
     refresh()
@@ -102,10 +95,10 @@ export default function App() {
         style={{ position: 'relative' }}
       >
         <WalkMap
-  userPoints={userPoints}
-  friendRoutes={NO_FRIEND_ROUTES}
-  initialLoading={initialLoading}
-/>
+          userPoints={userPoints}
+          friendRoutes={NO_FRIEND_ROUTES}
+          initialLoading={initialLoading}
+        />
 
         <p
           role="status"
