@@ -76,8 +76,8 @@ try:
 
     # ---------- state ----------
     menus = {
-        "main": ["Buddy", "Start Walk", "Phone link"],
-        "pet":  ["Feed", "Pet", "Back"],
+        "main": ["> Buddy <", "> Start Walk <", "> Phone link <"],
+        "pet":  ["- Feed", "- Pet", "- Back"],
     }
     state = "splash"        # splash | main | pet | ready | walk | end | info
     splash_t0 = time.monotonic()
