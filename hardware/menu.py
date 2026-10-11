@@ -1,5 +1,26 @@
+import math
+import os
+import sqlite3
+import threading
+import time
+from datetime import datetime, timezone
+from signal import pause
+
+import pynmea2
+import requests
+import serial
+from gpiozero import Button
+from luma.core.interface.serial import i2c
+from luma.core.render import canvas
+from luma.oled.device import ssd1306
 from PIL import Image
 
+# ---------- config ----------
+BASE = "http://192.168.135.93:8000"
+HEADERS = {"X-Demo-User-Id": "pablo"}
+DECAY_SECONDS = 30   # seconds between pet stat decay ticks
+
+# ---------- sprites ----------
 def load_sprite(path, cells=(34, 36)):
     img = Image.open(path).convert("L")
     img = img.resize(cells, Image.NEAREST)          # one pixel per art cell
@@ -19,48 +40,41 @@ tick = 0
 cat = frames["idle"]
 bounce = 0
 
-import time
-from gpiozero import Button
-from luma.core.interface.serial import i2c
-from luma.oled.device import ssd1306
-from luma.core.render import canvas
-import threading
+# ---------- hardware ----------
 lock = threading.Lock()
-import math
-import serial
-import pynmea2
-import sqlite3
-import os
-
 device = ssd1306(i2c(port=1, address=0x3C))
-
 btn = Button(17, hold_time=0.8)
 held = False
 
+# ---------- state ----------
 menus = {
     "main": ["Buddy", "Start Walk"],
     "pet":  ["Feed", "Pet", "Back"],
-    "end": ["Keep", "Delete"],
+    "end":  ["Keep", "Send", "Delete"],
 }
 state = "main"
 cursor = 0
 hunger = 50      # 0 = full, 100 = starving
 happy = 50       # 0 = sad, 100 = happy
-walk_start = 0
 react_until = 0
+send_status = ""
 
-db = sqlite3.connect(os.path.expanduser("~/trailbuddy.db"), check_same_thread=False)
-db_lock = threading.Lock()
-db.executescript("""
-CREATE TABLE IF NOT EXISTS walks (id INTEGER PRIMARY KEY, start_ts REAL, end_ts REAL, distance_m REAL);
-CREATE TABLE IF NOT EXISTS points (walk_id INTEGER, ts REAL, lat REAL, lon REAL);
-""")
+walk_start = 0
 walk_id = None
 walk_secs = 0
 distance_m = 0.0
 last_pos = None
 gps = {"fix": False}
 
+# ---------- database ----------
+db = sqlite3.connect(os.path.expanduser("~/trailbuddy.db"), check_same_thread=False)
+db_lock = threading.Lock()
+db.executescript("""
+CREATE TABLE IF NOT EXISTS walks (id INTEGER PRIMARY KEY, start_ts REAL, end_ts REAL, distance_m REAL);
+CREATE TABLE IF NOT EXISTS points (walk_id INTEGER, ts REAL, lat REAL, lon REAL);
+""")
+
+# ---------- helpers ----------
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371000
     p1, p2 = math.radians(lat1), math.radians(lat2)
@@ -68,8 +82,7 @@ def haversine(lat1, lon1, lat2, lon2):
     a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
     return 2 * R * math.asin(math.sqrt(a))
 
-DECAY_SECONDS = 30   # slow this down later (30+) for real use
-
+# ---------- background threads ----------
 def decay_loop():
     global hunger, happy
     while True:
@@ -79,8 +92,6 @@ def decay_loop():
         if state == "pet":
             draw_menu()
 
-threading.Thread(target=decay_loop, daemon=True).start()
-
 def anim_loop():
     global bounce, tick, cat
     while True:
@@ -88,10 +99,8 @@ def anim_loop():
         bounce = 2 - bounce
         tick = (tick + 1) % len(seq)
         cat = frames[seq[tick]]
-        if state in ("main", "walk", "pet", "ready"):
+        if state in ("main", "walk", "pet", "ready", "sending"):
             draw_menu()
-
-threading.Thread(target=anim_loop, daemon=True).start()
 
 def gps_loop():
     global distance_m, last_pos
@@ -120,8 +129,7 @@ def gps_loop():
             distance_m += haversine(*last_pos, *pos)
             last_pos = pos
 
-threading.Thread(target=gps_loop, daemon=True).start()
-
+# ---------- drawing ----------
 def draw_menu():
     with lock:
         with canvas(device) as draw:
@@ -138,23 +146,27 @@ def draw_menu():
                     prefix = "> " if i == cursor else "  "
                     draw.text((4, 5 + i * 12), prefix + name, fill="white")
                 draw.text((4, 50), f"H:{hunger} Happy:{happy}", fill="white")
+            elif state == "ready":
+                draw.bitmap((5, 12 + bounce), cat, fill="white")
+                draw.text((44, 18), "Ready?", fill="white")
+                draw.text((44, 34), "Click to go", fill="white")
+                draw.text((44, 48), "Locked" if gps["fix"] else "Searching", fill="white")
             elif state == "walk":
                 draw.bitmap((5, 12 + bounce), cat, fill="white")
                 secs = int(time.time() - walk_start)
                 draw.text((44, 18), f"Time: {secs // 60}:{secs % 60:02d}", fill="white")
                 draw.text((44, 34), f"Dist: {distance_m / 1609.344:.2f} mi", fill="white")
                 draw.text((44, 48), "GPS: Locked" if gps["fix"] else "GPS: Searching", fill="white")
-            elif state == "ready":
-                draw.bitmap((5, 12 + bounce), cat, fill="white")
-                draw.text((44, 18), "Ready?", fill="white")
-                draw.text((44, 34), "Click to go", fill="white")
-                draw.text((44, 48), "Locked" if gps["fix"] else "Searching", fill="white")
             elif state == "end":
                 draw.text((4, 2), f"{distance_m / 1609.344:.2f} mi  {walk_secs // 60}:{walk_secs % 60:02d}", fill="white")
                 for i, name in enumerate(menus["end"]):
                     prefix = "> " if i == cursor else "  "
                     draw.text((4, 20 + i * 12), prefix + name, fill="white")
+            elif state == "sending":
+                draw.bitmap((5, 12 + bounce), cat, fill="white")
+                draw.text((44, 28), send_status, fill="white")
 
+# ---------- walk lifecycle ----------
 def start_walk():
     global state, walk_start, distance_m, last_pos, walk_id
     state = "walk"
@@ -182,8 +194,36 @@ def delete_walk():
         db.execute("DELETE FROM walks WHERE id=?", (walk_id,))
         db.commit()
 
+def send_walk(wid):
+    global send_status, state, cursor
+    try:
+        with db_lock:
+            rows = db.execute("SELECT ts, lat, lon FROM points WHERE walk_id=? ORDER BY ts", (wid,)).fetchall()
+        points = [{"client_point_id": f"{wid}-{ts}", "latitude": lat, "longitude": lon,
+                   "recorded_at": datetime.fromtimestamp(ts, timezone.utc).isoformat()}
+                  for ts, lat, lon in rows]
+        if not points:
+            send_status = "No route"
+        else:
+            r = requests.post(f"{BASE}/walks/start", headers=HEADERS, timeout=10)
+            r.raise_for_status()
+            sid = r.json()["id"]
+            for i in range(0, len(points), 500):
+                requests.post(f"{BASE}/walks/{sid}/points/batch", headers=HEADERS,
+                              json={"points": points[i:i + 500]}, timeout=20).raise_for_status()
+            requests.patch(f"{BASE}/walks/{sid}", headers=HEADERS, timeout=10).raise_for_status()
+            send_status = "Sent!"
+    except Exception:
+        send_status = "Send failed"
+    time.sleep(2)                          # leave the result on screen briefly
+    state, cursor = "main", 0
+    draw_menu()
+
+# ---------- button handling ----------
 def select():
-    global state, cursor, hunger, happy, react_until
+    global state, cursor, hunger, happy, react_until, send_status
+    if state == "sending":                 # ignore presses while uploading
+        return
     if state == "ready":                   # long press cancels back to the menu
         state = "main"
         draw_menu()
@@ -212,11 +252,11 @@ def select():
         elif choice == "Delete":
             delete_walk()
             state, cursor = "main", 0
+        elif choice == "Send":
+            send_status = "Sending..."
+            state = "sending"
+            threading.Thread(target=send_walk, args=(walk_id,), daemon=True).start()
     draw_menu()
-
-def show(msg):
-    with canvas(device) as draw:
-        draw.text((10, 25), msg, fill="white")
 
 def on_held():
     global held
@@ -236,6 +276,10 @@ def on_released():
 btn.when_held = on_held
 btn.when_released = on_released
 
-from signal import pause
+# ---------- start ----------
+threading.Thread(target=decay_loop, daemon=True).start()
+threading.Thread(target=anim_loop, daemon=True).start()
+threading.Thread(target=gps_loop, daemon=True).start()
+
 draw_menu()
 pause()

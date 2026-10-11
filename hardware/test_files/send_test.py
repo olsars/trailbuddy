@@ -1,6 +1,6 @@
 import os, sqlite3, requests
 
-SERVER_URL = "http://CHANGE-ME:5000/api/walks"   # your teammate's endpoint
+SERVER_URL = "http://192.168.135.93:8000/docs"   # your teammate's endpoint
 
 db = sqlite3.connect(os.path.expanduser("~/trailbuddy.db"))
 
@@ -11,5 +11,11 @@ def build_payload(wid):
             "points": [{"ts": t, "lat": la, "lon": lo} for t, la, lo in pts]}
 
 latest = db.execute("SELECT MAX(id) FROM walks").fetchone()[0]
+
+import json
+p = build_payload(latest)
+print(json.dumps(p)[:300])          # the start of what would be sent
+print(len(p["points"]), "points")
+
 r = requests.post(SERVER_URL, json=build_payload(latest), timeout=10)
 print(r.status_code, r.text[:200])
