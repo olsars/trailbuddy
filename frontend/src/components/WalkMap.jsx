@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Circle,
   MapContainer,
@@ -60,18 +60,44 @@ function createAvatarIcon(label, avatarUrl, color, isCurrentUser) {
   })
 }
 
-function FitRoutes({ positions, fallbackCenter, zoom }) {
+function FitRoutes({ positions, zoom }) {
   const map = useMap()
+  const fitted = useRef(false)
 
   useEffect(() => {
+    if (fitted.current || positions.length === 0) return
+
+    fitted.current = true
+
     if (positions.length > 1) {
-      map.fitBounds(positions, { padding: [48, 48], maxZoom: 16 })
-    } else if (positions.length === 1) {
-      map.setView(positions[0], zoom)
+      map.fitBounds(positions, {
+        padding: [48, 48],
+        maxZoom: 16,
+        animate: false,
+      })
     } else {
-      map.setView(fallbackCenter, zoom)
+      map.setView(positions[0], zoom, { animate: false })
     }
-  }, [map, positions, fallbackCenter, zoom])
+  }, [map, positions, zoom])
+
+  useEffect(() => {
+    let timer
+
+    const observer = new ResizeObserver(() => {
+      window.clearTimeout(timer)
+
+      timer = window.setTimeout(() => {
+        map.invalidateSize({ pan: false })
+      }, 100)
+    })
+
+    observer.observe(map.getContainer())
+
+    return () => {
+      observer.disconnect()
+      window.clearTimeout(timer)
+    }
+  }, [map])
 
   return null
 }
@@ -81,7 +107,42 @@ export default function WalkMap({
   friendRoutes = [],
   center = [28.6024, -81.2001],
   zoom = 15,
+  initialLoading = false,
 }) {
+
+    const [tileStatus, setTileStatus] = useState('loading')
+  const loadedTiles = useRef(0)
+
+  const tileEvents = useMemo(
+    () => ({
+      loading() {
+        loadedTiles.current = 0
+      },
+      tileload() {
+        loadedTiles.current += 1
+      },
+      load() {
+        setTileStatus(
+          loadedTiles.current > 0 ? 'ready' : 'error',
+        )
+      },
+    }),
+    [],
+  )
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setTileStatus((current) =>
+        current === 'loading' ? 'error' : current,
+      )
+    }, 15000)
+
+    return () => window.clearTimeout(timer)
+  }, [])
+
+  const loading = initialLoading || tileStatus === 'loading'
+  const ready = !initialLoading && tileStatus === 'ready'
+
   const validUserPoints = useMemo(
     () =>
       userPoints
@@ -112,7 +173,10 @@ export default function WalkMap({
   )
 
   return (
-    <div className="walk-map">
+    <div
+    className={`walk-map ${ready ? 'is-ready' : ''}`}
+    aria-busy={loading}
+>
       <MapContainer
         center={currentPosition ?? center}
         zoom={zoom}
@@ -120,13 +184,13 @@ export default function WalkMap({
         zoomControl={false}
       >
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        />
+      attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+      url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+      eventHandlers={tileEvents}
+      />
 
         <FitRoutes
           positions={allPositions}
-          fallbackCenter={center}
           zoom={zoom}
         />
         <ZoomControl position="topright" />
@@ -196,6 +260,34 @@ export default function WalkMap({
           )
         })}
       </MapContainer>
+      <div
+  className={`map-loading ${ready ? 'map-loading--hidden' : ''}`}
+  aria-hidden={ready}
+>
+  {loading ? (
+    <div role="status" className="map-loading__content">
+      <span className="map-loading__spinner" aria-hidden="true" />
+      <strong>Finding your trail…</strong>
+      <span>
+        {initialLoading
+          ? 'Connecting to TrailBuddy'
+          : 'Loading the map'}
+      </span>
+    </div>
+  ) : (
+    <div role="alert" className="map-loading__content">
+      <strong>The map couldn’t load</strong>
+      <span>Check your internet connection and try again.</span>
+
+      <button
+        type="button"
+        onClick={() => window.location.reload()}
+      >
+        Retry
+      </button>
+    </div>
+  )}
+</div>
     </div>
   )
 }
