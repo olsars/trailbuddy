@@ -171,7 +171,7 @@ export default function WalkMap({
             position={currentPosition}
             icon={createAvatarIcon(
               'You',
-              'https://api.dicebear.com/7.x/bottts/svg?seed=Buddy',
+              '/avatars/cat.avif',
               '#ff7438',
               true,
             )}

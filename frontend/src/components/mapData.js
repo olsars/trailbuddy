@@ -19,7 +19,7 @@ export const sampleFriendRoutes = [
     id: 'pablo',
     label: 'Pablo',
     color: '#91abc5',
-    avatarUrl: 'https://api.dicebear.com/7.x/initials/svg?seed=Pablo',
+    avatarUrl: '/avatars/cat.avif',
     points: [
       [37.953, -122.5915],
       [37.9542, -122.589],
@@ -31,7 +31,7 @@ export const sampleFriendRoutes = [
     id: 'laeh',
     label: 'Laeh',
     color: '#a7c985',
-    avatarUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=Laeh',
+    avatarUrl: '/avatars/cat.avif',
     points: [
       [37.958, -122.5815],
       [37.957, -122.5795],
@@ -43,7 +43,7 @@ export const sampleFriendRoutes = [
     id: 'sam',
     label: 'Sam',
     color: '#d2c979',
-    avatarUrl: 'https://api.dicebear.com/7.x/initials/svg?seed=Sam',
+    avatarUrl: '/avatars/cat.avif',
     points: [
       [37.952, -122.579],
       [37.9528, -122.5775],
