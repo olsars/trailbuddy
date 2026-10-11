@@ -2,11 +2,12 @@ import { useEffect, useState } from 'react'
 import FriendsPanel from './features/friends/FriendsPanel'
 import WalkMap from './components/WalkMap'
 import { requestJson } from './lib/request'
+import { loadFriendData } from './lib/friendData'
 
 // Which demo user the page acts as: /app/?user=pablo   (default: sam)
 // It must be the same user the Pi sends walks as (TRAILBUDDY_USER on the Pi, default pablo).
 const DEMO_USER = new URLSearchParams(window.location.search).get('user') || 'pablo'
-const NO_FRIEND_ROUTES = []
+const AVATAR_URL = `${import.meta.env.BASE_URL}avatars/cat.avif`
 
 // Vite uses the proxy; FastAPI's built app uses direct API paths.
 const API_BASE = import.meta.env.DEV ? '/api' : ''
@@ -21,6 +22,7 @@ function getData(path, signal) {
 export default function App() {
   const [userPoints, setUserPoints] = useState([])
   const [friends, setFriends] = useState([])
+  const [friendRoutes, setFriendRoutes] = useState([])
   const [initialLoading, setInitialLoading] = useState(true)
   const [status, setStatus] = useState('Connecting to backend…')
 
@@ -30,9 +32,11 @@ export default function App() {
 
     async function refresh() {
       try {
-        const [locationResult, friendResults] = await Promise.all([
+        const [locationResult, friendResults, sharedResults] = await Promise.all([
           getData(`/locations/${DEMO_USER}`, controller.signal),
           getData('/friends', controller.signal),
+          // If this one fails, your own route should keep updating, so fall back to "nobody is sharing".
+          getData('/locations/shared-with-me', controller.signal).catch(() => []),
         ])
 
         const location = locationResult.last_location
@@ -46,19 +50,18 @@ export default function App() {
             ? [location]
             : []
 
+        const friendData = await loadFriendData(
+          (path) => getData(path, controller.signal),
+          friendResults,
+          sharedResults,
+          AVATAR_URL,
+        )
+
         if (controller.signal.aborted) return
 
         setUserPoints(points)
-
-        setFriends(
-          friendResults.map((friend) => ({
-            id: friend.id,
-            displayName: friend.display_name,
-            avatar: friend.avatar,
-            locationSharing: false,
-            location: null,
-          })),
-        )
+        setFriends(friendData.friendCards)
+        setFriendRoutes(friendData.friendRoutes)
 
         setStatus(
           !location
@@ -98,7 +101,7 @@ export default function App() {
       >
         <WalkMap
           userPoints={userPoints}
-          friendRoutes={NO_FRIEND_ROUTES}
+          friendRoutes={friendRoutes}
           initialLoading={initialLoading}
         />
 
