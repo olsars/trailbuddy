@@ -1,0 +1,73 @@
+.walk-map,
+.walk-map__canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.walk-map {
+  position: relative;
+  min-height: 320px;
+  overflow: hidden;
+  background: #111827;
+}
+
+.walk-map__canvas {
+  background: #111827;
+}
+
+.custom-avatar-pin {
+  border: 0;
+  background: transparent;
+}
+
+.map-pin {
+  position: relative;
+  display: flex;
+  width: 48px;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  transform: translateY(-50%);
+}
+
+.map-pin__avatar {
+  display: block;
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--pin-color);
+  border-radius: 50%;
+  background: #e5e7eb;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 45%);
+  object-fit: cover;
+}
+
+.map-pin__label,
+.map-pin__status {
+  max-width: 120px;
+  overflow: hidden;
+  padding: 3px 8px;
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 999px;
+  background: #202a43;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 30%);
+  color: #f3f4f6;
+  font: 600 11px/1.2 system-ui, sans-serif;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.map-pin__status {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  border-color: var(--pin-color);
+}
+
+.leaflet-control-zoom a {
+  color: #e5e7eb !important;
+  background: #202a43 !important;
+  border-color: #39445b !important;
+}
+
+.leaflet-control-attribution {
+  font-size: 10px;
+}

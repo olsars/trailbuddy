@@ -1,8 +1,10 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="TrailBuddy walk map and safety dashboard" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <title>TrailBuddy</title>
   <style>
     :root {
@@ -15,189 +17,20 @@
       --line: #c9d5ad;
     }
     * { box-sizing: border-box; }
-    body {
+    html, body, #root {
       margin: 0;
+      min-height: 100%;
+    }
+    body {
       min-height: 100vh;
       color: var(--ink);
       background: var(--cream);
       font-family: ui-monospace, "Cascadia Mono", monospace;
     }
-    main { width: min(1000px, 92vw); margin: 0 auto; padding: 34px 0 48px; }
-    header { display: flex; justify-content: space-between; gap: 24px; align-items: end; }
-    h1 { margin: 0; font-size: clamp(2rem, 6vw, 4rem); letter-spacing: -0.08em; }
-    .tag { margin: 8px 0 0; opacity: .7; }
-    .status { padding: 10px 14px; border: 2px solid var(--ink); background: var(--sun); box-shadow: 4px 4px 0 var(--ink); }
-    .grid { display: grid; grid-template-columns: 2fr 1fr; gap: 18px; margin-top: 28px; }
-    .card { border: 2px solid var(--ink); background: var(--paper); box-shadow: 6px 6px 0 var(--ink); padding: 18px; }
-    .map { min-height: 480px; display: flex; flex-direction: column; }
-    svg { width: 100%; flex: 1; min-height: 360px; background-color: #e8eed2; background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px); background-size: 30px 30px; border: 2px solid var(--ink); }
-    polyline { fill: none; stroke: var(--moss); stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
-    circle { fill: var(--sun); stroke: var(--ink); stroke-width: 3; }
-    h2 { margin: 0 0 16px; font-size: 1rem; text-transform: uppercase; letter-spacing: .12em; }
-    .metrics { display: grid; gap: 12px; }
-    .metric { border-bottom: 1px solid var(--line); padding-bottom: 12px; }
-    .metric span { display: block; opacity: .65; font-size: .75rem; margin-bottom: 4px; }
-    .metric strong { font-size: 1.1rem; }
-    .actions { display: grid; gap: 10px; margin-top: 20px; }
-    button { font: inherit; font-weight: 700; border: 2px solid var(--ink); padding: 12px; color: var(--ink); background: var(--sun); cursor: pointer; box-shadow: 3px 3px 0 var(--ink); }
-    button:active { transform: translate(3px, 3px); box-shadow: none; }
-    button.secondary { background: var(--paper); }
-    button:disabled { opacity: .45; cursor: not-allowed; }
-    .empty { margin: auto; text-align: center; max-width: 32ch; line-height: 1.5; opacity: .65; }
-    .coordinates { margin: 12px 0 0; min-height: 1.2em; font-size: .8rem; opacity: .7; }
-    .error { color: #9c2f2f; min-height: 1.2em; font-size: .8rem; }
-    @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } header { align-items: start; flex-direction: column; } .map { min-height: 400px; } }
   </style>
 </head>
 <body>
-  <main>
-    <header>
-      <div><h1>TrailBuddy</h1><p class="tag">Your private trail companion.</p></div>
-      <div class="status" id="status">NO WALK YET</div>
-    </header>
-    <section class="grid">
-      <div class="card map">
-        <h2>Offline trail plot</h2>
-        <svg id="trail" viewBox="0 0 700 420" role="img" aria-label="Recorded trail">
-          <polyline id="trailLine" points=""></polyline>
-          <circle id="buddy" cx="350" cy="210" r="10" hidden></circle>
-        </svg>
-        <p class="empty" id="empty">Start a walk, then send GPS points or use Demo GPS.</p>
-        <p class="coordinates" id="coordinates"></p>
-      </div>
-      <aside class="card">
-        <h2>Walk details</h2>
-        <div class="metrics">
-          <div class="metric"><span>Walk ID</span><strong id="walkId">—</strong></div>
-          <div class="metric"><span>GPS points</span><strong id="pointCount">0</strong></div>
-          <div class="metric"><span>Started</span><strong id="started">—</strong></div>
-        </div>
-        <div class="actions">
-          <button id="startButton">Start new walk</button>
-          <button id="demoButton" class="secondary" disabled>Start demo GPS</button>
-          <button id="endButton" class="secondary" disabled>End walk</button>
-        </div>
-        <p class="error" id="error"></p>
-      </aside>
-    </section>
-  </main>
-  <script>
-    const state = { walk: null, points: [], demoTimer: null };
-    const byId = (id) => document.getElementById(id);
-
-    async function request(path, options = {}) {
-      const response = await fetch(path, options);
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        throw new Error(body.detail || `Request failed (${response.status})`);
-      }
-      return response.json();
-    }
-
-    function drawTrail() {
-      const points = state.points;
-      byId("pointCount").textContent = points.length;
-      byId("empty").hidden = points.length > 0;
-      byId("buddy").hidden = points.length === 0;
-      if (!points.length) {
-        byId("trailLine").setAttribute("points", "");
-        byId("coordinates").textContent = "";
-        return;
-      }
-      const lats = points.map((point) => point.latitude);
-      const lons = points.map((point) => point.longitude);
-      const minLat = Math.min(...lats), maxLat = Math.max(...lats);
-      const minLon = Math.min(...lons), maxLon = Math.max(...lons);
-      const latSpan = Math.max(maxLat - minLat, 0.0003);
-      const lonSpan = Math.max(maxLon - minLon, 0.0003);
-      const plotMinLat = (minLat + maxLat - latSpan) / 2;
-      const plotMinLon = (minLon + maxLon - lonSpan) / 2;
-      const projected = points.map((point) => {
-        const x = 35 + ((point.longitude - plotMinLon) / lonSpan) * 630;
-        const y = 385 - ((point.latitude - plotMinLat) / latSpan) * 350;
-        return [x, y];
-      });
-      byId("trailLine").setAttribute("points", projected.map((p) => p.join(",")).join(" "));
-      const last = projected.at(-1);
-      byId("buddy").setAttribute("cx", last[0]);
-      byId("buddy").setAttribute("cy", last[1]);
-      const current = points.at(-1);
-      byId("coordinates").textContent = `${current.latitude.toFixed(6)}, ${current.longitude.toFixed(6)}`;
-    }
-
-    function render() {
-      const walk = state.walk;
-      const active = walk?.status === "active";
-      byId("status").textContent = walk ? walk.status.toUpperCase() : "NO WALK YET";
-      byId("walkId").textContent = walk ? `${walk.id.slice(0, 8)}…` : "—";
-      byId("walkId").title = walk?.id || "";
-      byId("started").textContent = walk ? new Date(walk.start_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—";
-      byId("startButton").disabled = active;
-      byId("demoButton").disabled = !active;
-      byId("endButton").disabled = !active;
-      drawTrail();
-    }
-
-    async function loadLatestWalk() {
-      const walks = await request("/walks");
-      state.walk = [...walks].reverse().find((walk) => walk.status === "active") || walks.at(-1) || null;
-      if (state.walk) state.points = await request(`/walks/${state.walk.id}/points`);
-      render();
-    }
-
-    async function startWalk() {
-      stopDemo();
-      state.walk = await request("/walks/start", { method: "POST" });
-      state.points = [];
-      render();
-    }
-
-    async function endWalk() {
-      stopDemo();
-      state.walk = await request(`/walks/${state.walk.id}`, { method: "PATCH" });
-      render();
-    }
-
-    function stopDemo() {
-      clearInterval(state.demoTimer);
-      state.demoTimer = null;
-      byId("demoButton").textContent = "Start demo GPS";
-    }
-
-    function toggleDemo() {
-      if (state.demoTimer) return stopDemo();
-      byId("demoButton").textContent = "Stop demo GPS";
-      state.demoTimer = setInterval(async () => {
-        try {
-          const index = state.points.length;
-          const point = await request(`/walks/${state.walk.id}/points`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              latitude: 40.7128 + index * 0.00008 + Math.sin(index / 3) * 0.00015,
-              longitude: -74.0060 + index * 0.00010 + Math.cos(index / 4) * 0.00012,
-            }),
-          });
-          state.points.push(point);
-          drawTrail();
-        } catch (error) { showError(error); stopDemo(); }
-      }, 1000);
-    }
-
-    function showError(error) {
-      byId("error").textContent = error.message;
-      setTimeout(() => { byId("error").textContent = ""; }, 5000);
-    }
-
-    byId("startButton").addEventListener("click", () => startWalk().catch(showError));
-    byId("endButton").addEventListener("click", () => endWalk().catch(showError));
-    byId("demoButton").addEventListener("click", toggleDemo);
-    loadLatestWalk().catch(showError);
-    setInterval(async () => {
-      if (!state.walk || state.demoTimer) return;
-      state.points = await request(`/walks/${state.walk.id}/points`);
-      drawTrail();
-    }, 2000);
-  </script>
+  <div id="root"></div>
+  <script type="module" src="/src/main.jsx"></script>
 </body>
 </html>
