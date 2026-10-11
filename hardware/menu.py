@@ -1,5 +1,6 @@
 import math
 import os
+import queue
 import socket
 import sqlite3
 import subprocess
@@ -13,7 +14,7 @@ from urllib.parse import urlparse
 import pynmea2
 import requests
 import serial
-from gpiozero import Button
+from gpiozero import Button, PWMOutputDevice
 from luma.core.interface.serial import i2c
 from luma.core.render import canvas
 from luma.oled.device import ssd1306
@@ -39,6 +40,15 @@ MAX_HDOP = 5.0          # HDOP above this (very poor satellite geometry): don't 
 DEBUG = os.environ.get("TRAILBUDDY_DEBUG") == "1"   # print every 5 s why GPS fixes are kept or dropped
 HEARTBEAT_SECONDS = 30  # standing still: re-send the last good position this often, so the page does not call it stale (it does after 5 min)
 SPLASH_SECONDS = 3.6    # how long the start screen shows (any button press skips it)
+BUZZER_PIN = os.environ.get("TRAILBUDDY_BUZZER_PIN", "27")   # BCM number (27 = header pin 13); "off" turns sound off
+
+def _env_float(name, default):
+    try:
+        return float(os.environ.get(name, default))
+    except ValueError:
+        return default
+
+VOLUME = max(0.1, min(1.0, _env_float("TRAILBUDDY_VOLUME", 1.0)))   # 1.0 = loudest; lower is quieter
 
 try:
     # ---------- sprites ----------
@@ -74,9 +84,75 @@ try:
     btn = Button(17, hold_time=0.8)
     held = False
 
+    # ---------- sound (a passive buzzer or speaker on one GPIO pin) ----------
+    MELODIES = {                              # (frequency in Hz, seconds); 0 = a rest
+        "boot":       [(784, .12), (988, .12), (1319, .12), (1568, .24)],      # the cat waking up
+        "click":      [(1800, .02)],
+        "select":     [(2400, .045)],
+        "walk_start": [(1047, .10), (1568, .20)],                              # rising
+        "walk_end":   [(1568, .10), (1047, .22)],                              # falling
+        "gps_lock":   [(1319, .09), (1760, .18)],
+        "happy":      [(1568, .06), (2093, .06), (1568, .06), (2093, .12)],
+        "on":         [(1760, .08)],
+    }
+
+    class Sound:
+        """Plays short melodies in the background, so they never hold up the screen or the button."""
+
+        def __init__(self, device, volume=1.0):
+            self.dev, self.duty = device, 0.5 * volume      # a square wave is loudest at 50% duty
+            self.enabled = True
+            self.busy = False
+            self.q = queue.Queue(maxsize=6)
+            if device is not None:
+                threading.Thread(target=self._run, daemon=True).start()
+
+        def play(self, name):
+            if not self.enabled or self.dev is None:
+                return
+            if name in ("click", "select") and (self.busy or not self.q.empty()):
+                return                                      # a tick must not interrupt or queue behind a melody
+            try:
+                self.q.put_nowait(name)
+            except queue.Full:
+                pass
+
+        def _run(self):
+            while True:
+                name = self.q.get()
+                self.busy = True
+                try:
+                    for freq, secs in MELODIES[name]:
+                        if not self.enabled:
+                            break
+                        if freq:
+                            self.dev.frequency = freq
+                            self.dev.value = self.duty
+                        else:
+                            self.dev.value = 0
+                        time.sleep(secs)
+                    self.dev.value = 0
+                except Exception as e:                      # e.g. the pin went away: stay quiet instead of crashing
+                    print("sound error, sound is off:", e)
+                    self.dev = None
+                finally:
+                    self.busy = False
+
+    def make_sound():
+        if BUZZER_PIN.strip().lower() in ("", "off", "none", "0"):
+            return Sound(None)
+        try:
+            device = PWMOutputDevice(int(BUZZER_PIN), frequency=1000, initial_value=0)   # silent until a note plays
+        except Exception as e:
+            print("no sound:", e)
+            device = None
+        return Sound(device, VOLUME)
+
+    sound = make_sound()
+
     # ---------- state ----------
     menus = {
-        "main": ["> Buddy <", "> Start Walk <", "> Phone link <"],
+        "main": ["> Buddy <", "> Start Walk <", "> Phone link <", "> Sound <"],
         "pet":  ["- Feed", "- Pet", "- Back"],
     }
     state = "splash"        # splash | main | pet | ready | walk | end | info
@@ -108,6 +184,7 @@ try:
             db.executescript("""
             CREATE TABLE IF NOT EXISTS walks (id INTEGER PRIMARY KEY, start_ts REAL, end_ts REAL, distance_m REAL);
             CREATE TABLE IF NOT EXISTS points (walk_id INTEGER, ts REAL, lat REAL, lon REAL);
+        CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
             """)
 
             def add_column(table, column, ddl, backfill=None):
@@ -122,6 +199,17 @@ try:
             add_column("walks", "synced", "INTEGER NOT NULL DEFAULT 0", "UPDATE walks SET synced = 1")
             add_column("points", "sent", "INTEGER NOT NULL DEFAULT 0", "UPDATE points SET sent = 1")
             add_column("points", "speed", "REAL")
+            db.commit()
+
+    def get_setting(key, default=None):
+        with db_lock:
+            row = db.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        return row[0] if row else default
+
+    def set_setting(key, value):
+        with db_lock:
+            db.execute("INSERT INTO settings (key, value) VALUES (?, ?) "
+                       "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, value))
             db.commit()
 
     def recover_unfinished():
@@ -347,6 +435,7 @@ try:
               f"saved {stats['saved']} (heartbeats {stats['beat']}) still {stats['still']} jump {stats['jump']} poor {stats['poor']}")
 
     def gps_loop():
+        was_good, chime_t = False, 0.0
         while True:
             try:
                 ser = serial.Serial(GPS_PORT, 9600, timeout=1)
@@ -371,6 +460,10 @@ try:
                     valid = msg.status == "A"
                     gps["fix"] = valid
                     gps["good"] = valid and quality_ok()
+                    if gps["good"] and not was_good and state in ("ready", "walk") and time.time() - chime_t > 30:
+                        chime_t = time.time()
+                        sound.play("gps_lock")
+                    was_good = gps["good"]
                     walking = state == "walk" and walk_id
                     if walking and valid:
                         stats["fixes"] += 1
@@ -395,6 +488,16 @@ try:
                 gps["fix"] = gps["good"] = False
                 print("GPS error, retrying in 2 s:", e)
                 time.sleep(2)
+
+    def label_for(choice):
+        if choice == "> Sound <":
+            return "> Sound: on <" if sound.enabled else "> Sound: off <"
+        return choice
+
+    def toggle_sound():
+        sound.enabled = not sound.enabled
+        set_setting("sound", "on" if sound.enabled else "off")
+        sound.play("on")                    # a blip confirms it (and is silent when you just muted)
 
     # ---------- phone link (where to point a phone's browser) ----------
     info = {"host": None, "port": 8000}
@@ -434,7 +537,7 @@ try:
                 if state == "main":
                     x = (device.width - cat.width) // 2
                     draw.bitmap((x, 3 + bounce), cat, fill="white")
-                    label = menus["main"][cursor]
+                    label = label_for(menus["main"][cursor])
                     w = draw.textlength(label)
                     draw.text(((device.width - w) / 2, 50), label, fill="white")
                 elif state == "pet":
@@ -507,6 +610,7 @@ try:
             walk_id = cur.lastrowid
         walk_t0 = time.monotonic()
         state = "walk"
+        sound.play("walk_start")
         wake.set()                  # create the walk on the backend right away
         draw_menu()
 
@@ -514,6 +618,7 @@ try:
         global state, walk_secs
         walk_secs = int(time.monotonic() - walk_t0)
         state = "end"               # the GPS thread stops adding points to this walk
+        sound.play("walk_end")
         with db_lock:
             db.execute("UPDATE walks SET end_ts = ?, distance_m = ? WHERE id = ?",
                     (time.time(), distance_m, walk_id))
@@ -548,13 +653,17 @@ try:
             elif choice == "> Phone link <":
                 refresh_info()
                 state = "info"
+            elif choice == "> Sound <":
+                toggle_sound()
         elif state == "pet":
             if choice == "- Feed":
                 hunger = max(0, hunger - 20)
                 react_until = time.time() + 2
+                sound.play("happy")
             elif choice == "- Pet":
                 happy = min(100, happy + 10)
                 react_until = time.time() + 2
+                sound.play("happy")
             elif choice == "- Back":
                 state, cursor = "main", 0
         draw_menu()
@@ -562,6 +671,7 @@ try:
     def on_held():
         global held
         held = True
+        sound.play("select")
         try:
             select()
         except Exception:
@@ -571,6 +681,7 @@ try:
         global held, cursor, state
         if not held:
             try:
+                sound.play("click")
                 if state == "splash":          # any press skips the start screen
                     state = "main"
                     draw_menu()
@@ -592,12 +703,14 @@ try:
     # ---------- start ----------
     init_db()
     recover_unfinished()
+    sound.enabled = get_setting("sound", "on") == "on"
     splash_t0 = time.monotonic()            # the start screen's clock begins now, not while the sprites were loading
     threading.Thread(target=decay_loop, daemon=True).start()
     threading.Thread(target=anim_loop, daemon=True).start()
     threading.Thread(target=gps_loop, daemon=True).start()
     threading.Thread(target=uploader_loop, daemon=True).start()
 
+    sound.play("boot")
     draw_menu()
     pause()
 except KeyboardInterrupt:
