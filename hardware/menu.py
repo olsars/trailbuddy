@@ -3,6 +3,7 @@ import os
 import sqlite3
 import threading
 import time
+import traceback
 from datetime import datetime, timezone
 from signal import pause
 
@@ -16,13 +17,21 @@ from luma.oled.device import ssd1306
 from PIL import Image
 
 # ---------- config ----------
-BASE = "http://192.168.135.93:8000"
-HEADERS = {"X-Demo-User-Id": "pablo"}
+BASE = os.environ.get("TRAILBUDDY_API", "http://192.168.135.93:8000")
+HEADERS = {"X-Demo-User-Id": os.environ.get("TRAILBUDDY_USER", "pablo")}
+HERE = os.path.dirname(os.path.abspath(__file__))
 DECAY_SECONDS = 30   # seconds between pet stat decay ticks
 
 # ---------- sprites ----------
-def load_sprite(path, cells=(34, 36)):
-    img = Image.open(path).convert("L")
+def sprite_path(name):
+    for folder in (os.path.join(HERE, "image"), HERE):
+        path = os.path.join(folder, name)
+        if os.path.exists(path):
+            return path
+    raise FileNotFoundError(f"{name} not found in {HERE}/image or {HERE}")
+
+def load_sprite(name, cells=(34, 36)):
+    img = Image.open(sprite_path(name)).convert("L")
     img = img.resize(cells, Image.NEAREST)          # one pixel per art cell
     img = img.point(lambda p: 255 if p > 128 else 0)
     return img.convert("1")
@@ -104,33 +113,39 @@ def anim_loop():
 
 def gps_loop():
     global distance_m, last_pos
-    ser = serial.Serial("/dev/ttyAMA0", 9600, timeout=1)
     while True:
-        line = ser.readline().decode("ascii", errors="ignore").strip()
-        if not line.startswith(("$GPRMC", "$GNRMC")):
-            continue
         try:
-            msg = pynmea2.parse(line)
-        except pynmea2.ParseError:
-            continue
-        gps["fix"] = msg.status == "A"
-        if not gps["fix"]:
-            continue
-        pos = (msg.latitude, msg.longitude)
-        if state == "walk" and walk_id:
-            with db_lock:
-                db.execute("INSERT INTO points VALUES (?,?,?,?)", (walk_id, time.time(), *pos))
-                db.commit()
-        if state != "walk":
-            last_pos = None
-        elif last_pos is None:
-            last_pos = pos
-        elif haversine(*last_pos, *pos) > 3:      # ignore jitter under 3 m
-            distance_m += haversine(*last_pos, *pos)
-            last_pos = pos
+            ser = serial.Serial("/dev/ttyAMA0", 9600, timeout=1)
+            while True:
+                line = ser.readline().decode("ascii", errors="ignore").strip()
+                if not line.startswith(("$GPRMC", "$GNRMC")):
+                    continue
+                try:
+                    msg = pynmea2.parse(line)
+                except pynmea2.ParseError:
+                    continue
+                gps["fix"] = msg.status == "A"
+                if not gps["fix"]:
+                    continue
+                pos = (msg.latitude, msg.longitude)
+                if state == "walk" and walk_id:
+                    with db_lock:
+                        db.execute("INSERT INTO points VALUES (?,?,?,?)", (walk_id, time.time(), *pos))
+                        db.commit()
+                if state != "walk":
+                    last_pos = None
+                elif last_pos is None:
+                    last_pos = pos
+                elif haversine(*last_pos, *pos) > 3:      # ignore jitter under 3 m
+                    distance_m += haversine(*last_pos, *pos)
+                    last_pos = pos
+        except Exception as e:
+            gps["fix"] = False
+            print("GPS error, retrying in 2 s:", e)
+            time.sleep(2)
 
 # ---------- drawing ----------
-def draw_menu():
+def _render():
     with lock:
         with canvas(device) as draw:
             if state == "main":
@@ -165,6 +180,12 @@ def draw_menu():
             elif state == "sending":
                 draw.bitmap((5, 12 + bounce), cat, fill="white")
                 draw.text((44, 28), send_status, fill="white")
+
+def draw_menu():
+    try:
+        _render()
+    except Exception as e:      # e.g. a transient I2C error
+        print("draw error:", e)
 
 # ---------- walk lifecycle ----------
 def start_walk():
@@ -213,7 +234,8 @@ def send_walk(wid):
                               json={"points": points[i:i + 500]}, timeout=20).raise_for_status()
             requests.patch(f"{BASE}/walks/{sid}", headers=HEADERS, timeout=10).raise_for_status()
             send_status = "Sent!"
-    except Exception:
+    except Exception as e:
+        print("send failed:", e)         # shows up in the terminal / journal
         send_status = "Send failed"
     time.sleep(2)                          # leave the result on screen briefly
     state, cursor = "main", 0
@@ -261,16 +283,22 @@ def select():
 def on_held():
     global held
     held = True
-    select()
+    try:
+        select()
+    except Exception:
+        traceback.print_exc()
 
 def on_released():
     global held, cursor
     if not held:
-        if state == "ready":               # a short click starts the walk
-            start_walk()
-        elif state in menus:
-            cursor = (cursor + 1) % len(menus[state])
-            draw_menu()
+        try:
+            if state == "ready":           # a short click starts the walk
+                start_walk()
+            elif state in menus:
+                cursor = (cursor + 1) % len(menus[state])
+                draw_menu()
+        except Exception:
+            traceback.print_exc()
     held = False
 
 btn.when_held = on_held

@@ -1099,4 +1099,9 @@ def get_shared_location(
 
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
-app.mount("/app", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
+FRONTEND_DIST = FRONTEND_DIR / "dist"   # produced by `npm run build` in frontend/
+app.mount(
+    "/app",
+    StaticFiles(directory=FRONTEND_DIST if FRONTEND_DIST.is_dir() else FRONTEND_DIR, html=True),
+    name="frontend",
+)

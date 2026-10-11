@@ -171,7 +171,7 @@ export default function WalkMap({
             position={currentPosition}
             icon={createAvatarIcon(
               'You',
-              '/avatars/cat.avif',
+              `${import.meta.env.BASE_URL}avatars/cat.avif`,
               '#ff7438',
               true,
             )}

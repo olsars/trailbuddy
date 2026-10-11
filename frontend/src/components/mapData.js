@@ -19,7 +19,7 @@ export const sampleFriendRoutes = [
     id: 'pablo',
     label: 'Pablo',
     color: '#91abc5',
-    avatarUrl: '/avatars/cat.avif',
+    avatarUrl: `${import.meta.env.BASE_URL}avatars/cat.avif`,
     points: [
       [28.6075, -81.2045],
       [28.6064, -81.2028],
@@ -31,7 +31,7 @@ export const sampleFriendRoutes = [
     id: 'laeh',
     label: 'Laeh',
     color: '#a7c985',
-    avatarUrl: '/avatars/cat.avif',
+    avatarUrl: `${import.meta.env.BASE_URL}avatars/cat.avif`,
     points: [
       [28.5976, -81.1985],
       [28.5984, -81.1968],
@@ -43,7 +43,7 @@ export const sampleFriendRoutes = [
     id: 'sam',
     label: 'Sam',
     color: '#d2c979',
-    avatarUrl: '/avatars/cat.avif',
+    avatarUrl: `${import.meta.env.BASE_URL}avatars/cat.avif`,
     points: [
       [28.6012, -81.2085],
       [28.5998, -81.207],

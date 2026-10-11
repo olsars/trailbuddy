@@ -1,7 +1,7 @@
 export default function PixelAvatar({ name, size = 34 }) {
   return (
     <img
-      src="/avatars/cat.avif"
+      src={`${import.meta.env.BASE_URL}avatars/cat.avif`}
       alt={`${name}'s cat avatar`}
       width={size}
       height={size}

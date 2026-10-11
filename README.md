@@ -10,7 +10,8 @@ emergency contacts, and optional friend location sharing.
 
 ```powershell
 python -m pip install -r backend/requirements.txt
-python -m uvicorn backend.main:app --reload
+(cd frontend && npm ci && npm run build)   # the backend serves frontend/dist at /app/
+python -m uvicorn backend.main:app --host 0.0.0.0 --reload
 ```
 
 Open `http://127.0.0.1:8000/app/`, start a walk, then either use the page's demo
