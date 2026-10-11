@@ -31,8 +31,9 @@ HUNGER_PER_METER = 0.05 # walking: +1 hunger per 20 m
 # tens of metres while you stand still. These keep that drift off the trail.
 MIN_MOVING_MPS = 0.6    # below this speed (about 1.3 mph) you are standing still: ignore position changes
 MAX_WALK_MPS = 7.0      # a jump implying more than this (about 15 mph) is a GPS glitch, not you
-MIN_SATS = 5            # fewer satellites than this: don't trust the fix
-MAX_HDOP = 2.5          # HDOP above this (poor satellite geometry): don't trust the fix
+MIN_SATS = 4            # fewer satellites than this: don't put the fix on the trail (4 = minimum for a 3D fix)
+MAX_HDOP = 5.0          # HDOP above this (very poor satellite geometry): don't put the fix on the trail
+DEBUG = os.environ.get("TRAILBUDDY_DEBUG") == "1"   # print every 5 s why GPS fixes are kept or dropped
 
 try:
     # ---------- sprites ----------
@@ -86,7 +87,8 @@ try:
     last_pos = None
     last_ts = 0.0
     rejects = 0
-    gps = {"fix": False, "sats": None, "hdop": None}
+    gps = {"fix": False, "good": False, "sats": None, "hdop": None}
+    stats = {"fixes": 0, "saved": 0, "still": 0, "jump": 0, "poor": 0, "t": 0.0}   # per-walk counters for DEBUG
     net = {"ok": False, "open": 0, "pending": 0}   # live-upload status, kept up to date by the uploader
     wake = threading.Event()                       # wakes the uploader right away (walk start / end)
 
@@ -304,10 +306,12 @@ try:
             last_pos, last_ts = pos, ts
             return True
         if speed is not None and speed < MIN_MOVING_MPS:
+            stats["still"] += 1
             last_ts, rejects = ts, 0                  # standing still: position changes are drift. Time still
             return False                              # passes, so a later jump is judged against *now*
         step = haversine(*last_pos, *pos)
         if step / max(ts - last_ts, 1.0) > MAX_WALK_MPS:
+            stats["jump"] += 1
             rejects += 1                              # a jump no walker could make: a GPS glitch
             last_ts = ts                              # keep judging it against *now*, or it looks more plausible each second
             if rejects < 5:
@@ -320,6 +324,13 @@ try:
             apply_walk_effects(step)
             last_pos, last_ts = pos, ts
         return True
+
+    def debug_report(speed):
+        if not DEBUG or state not in ("ready", "walk") or time.time() - stats["t"] < 5:
+            return
+        stats["t"] = time.time()
+        print(f"GPS [{state}] fix={gps['fix']} good={gps['good']} sats={gps['sats']} hdop={gps['hdop']} speed={speed} m/s | fixes {stats['fixes']} "
+              f"saved {stats['saved']} still {stats['still']} jump {stats['jump']} poor {stats['poor']}")
 
     def gps_loop():
         while True:
@@ -341,26 +352,40 @@ try:
                         msg = pynmea2.parse(line)
                     except pynmea2.ParseError:
                         continue
-                    gps["fix"] = msg.status == "A" and quality_ok()
-                    if not gps["fix"]:
-                        continue
-                    if state != "walk" or not walk_id:
-                        reset_track()
-                        continue
                     knots = to_float(msg.spd_over_grnd)
                     speed = round(knots * 0.514444, 2) if knots is not None else None   # knots -> m/s
+                    valid = msg.status == "A"
+                    gps["fix"] = valid
+                    gps["good"] = valid and quality_ok()
+                    walking = state == "walk" and walk_id
+                    if walking and valid:
+                        stats["fixes"] += 1
+                        if not gps["good"]:
+                            stats["poor"] += 1
+                    debug_report(speed)
+                    if not gps["good"]:
+                        continue
+                    if not walking:
+                        reset_track()
+                        continue
                     if handle_fix((msg.latitude, msg.longitude), gps_epoch(msg), speed):
+                        stats["saved"] += 1
                         with db_lock:
                             db.execute("INSERT INTO points (walk_id, ts, lat, lon, speed) VALUES (?,?,?,?,?)",
                                     (walk_id, gps_epoch(msg), msg.latitude, msg.longitude, speed))
                             db.commit()
                         wake.set()                      # push it out now instead of waiting for the next pass
             except Exception as e:
-                gps["fix"] = False
+                gps["fix"] = gps["good"] = False
                 print("GPS error, retrying in 2 s:", e)
                 time.sleep(2)
 
     # ---------- drawing ----------
+    def gps_label():
+        if gps["good"]:
+            return "GPS: Locked"
+        return "GPS: Weak" if gps["fix"] else "GPS: Searching"     # Weak = a fix, but too few satellites / poor geometry
+
     def _render():
         with lock:
             with canvas(device) as draw:
@@ -381,14 +406,14 @@ try:
                     draw.bitmap((5, 12 + bounce), cat, fill="white")
                     draw.text((44, 8), "Ready?", fill="white")
                     draw.text((44, 22), "Click to go", fill="white")
-                    draw.text((44, 36), "GPS: Locked" if gps["fix"] else "GPS: Searching", fill="white")
+                    draw.text((44, 36), gps_label(), fill="white")
                     draw.text((44, 50), "Net: ok" if net["ok"] else "Net: --", fill="white")
                 elif state == "walk":
                     draw.bitmap((5, 12 + bounce), cat, fill="white")
                     secs = int(time.monotonic() - walk_t0)
                     draw.text((44, 6), f"Time: {secs // 60}:{secs % 60:02d}", fill="white")
                     draw.text((44, 20), f"Dist: {distance_m / 1609.344:.2f} mi", fill="white")
-                    draw.text((44, 34), "GPS: Locked" if gps["fix"] else "GPS: Searching", fill="white")
+                    draw.text((44, 34), gps_label(), fill="white")
                     draw.text((44, 48), "Live: ok" if net["ok"] else f"Live: -- ({net['pending']})", fill="white")
                 elif state == "end":
                     draw.text((4, 4), f"{distance_m / 1609.344:.2f} mi  {walk_secs // 60}:{walk_secs % 60:02d}", fill="white")
@@ -412,6 +437,8 @@ try:
         global state, walk_t0, distance_m, walk_id
         distance_m = 0.0
         reset_track()
+        for key in stats:
+            stats[key] = 0
         with db_lock:
             cur = db.execute("INSERT INTO walks (start_ts) VALUES (?)", (time.time(),))
             db.commit()
